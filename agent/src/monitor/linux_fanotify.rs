@@ -73,7 +73,8 @@ impl FanotifyMonitor {
 
         let flags = FAN_CLOEXEC | class | FAN_UNLIMITED_QUEUE | FAN_UNLIMITED_MARKS;
 
-        let fd = unsafe { libc::fanotify_init(flags, libc::O_RDONLY as u32 | libc::O_LARGEFILE as u32) };
+        let fd =
+            unsafe { libc::fanotify_init(flags, libc::O_RDONLY as u32 | libc::O_LARGEFILE as u32) };
 
         if fd < 0 {
             let err = std::io::Error::last_os_error();
@@ -115,7 +116,11 @@ impl FanotifyMonitor {
 
         if ret < 0 {
             let err = std::io::Error::last_os_error();
-            tracing::warn!("Failed to add fanotify watch on {}: {}", path.display(), err);
+            tracing::warn!(
+                "Failed to add fanotify watch on {}: {}",
+                path.display(),
+                err
+            );
         } else {
             self.watched_paths.insert(path.clone());
             tracing::debug!("Added fanotify watch on {}", path.display());
@@ -159,7 +164,10 @@ impl FanotifyMonitor {
             }
         }
 
-        tracing::info!("Setting up fanotify watches on {} directories", watch_dirs.len());
+        tracing::info!(
+            "Setting up fanotify watches on {} directories",
+            watch_dirs.len()
+        );
 
         for dir in watch_dirs {
             if dir.exists() {
@@ -243,11 +251,7 @@ impl FanotifyMonitor {
         path_str.to_string()
     }
 
-    async fn process_event(
-        &self,
-        event: &FanEventMetadata,
-        blocking: bool,
-    ) -> Option<(bool, i32)> {
+    async fn process_event(&self, event: &FanEventMetadata, blocking: bool) -> Option<(bool, i32)> {
         // Get the file path from the fd
         let file_path = Self::read_link_for_fd(event.fd)?;
 
@@ -335,9 +339,8 @@ impl super::Monitor for FanotifyMonitor {
 
         loop {
             // Read events (blocking read)
-            let bytes_read = unsafe {
-                libc::read(raw_fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len())
-            };
+            let bytes_read =
+                unsafe { libc::read(raw_fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len()) };
 
             if bytes_read < 0 {
                 let err = std::io::Error::last_os_error();
@@ -358,9 +361,7 @@ impl super::Monitor for FanotifyMonitor {
                     break;
                 }
 
-                let event = unsafe {
-                    &*(buf.as_ptr().add(offset) as *const FanEventMetadata)
-                };
+                let event = unsafe { &*(buf.as_ptr().add(offset) as *const FanEventMetadata) };
 
                 // Validate event
                 if event.vers != 3 {

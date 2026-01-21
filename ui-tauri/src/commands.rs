@@ -75,7 +75,10 @@ pub async fn remove_exception(client: tauri::State<'_, IpcState>, id: i64) -> Re
 }
 
 #[tauri::command]
-pub async fn allow_once(client: tauri::State<'_, IpcState>, event_id: String) -> Result<(), String> {
+pub async fn allow_once(
+    client: tauri::State<'_, IpcState>,
+    event_id: String,
+) -> Result<(), String> {
     let mut client = client.lock().await;
     client.allow_once(event_id).await.map_err(|e| e.to_string())
 }

@@ -86,11 +86,7 @@ fn get_peer_credentials(stream: &UnixStream) -> Option<PeerCredentials> {
 
         if ret == 0 {
             // macOS doesn't provide PID via getpeereid, use 0 as placeholder
-            Some(PeerCredentials {
-                pid: 0,
-                uid,
-                gid,
-            })
+            Some(PeerCredentials { pid: 0, uid, gid })
         } else {
             None
         }
@@ -504,9 +500,15 @@ mod tests {
         let mode = Arc::new(RwLock::new("block".to_string()));
         let degraded_mode = Arc::new(RwLock::new(false));
 
-        let server = IpcServer::new(&socket_path, storage, mode, degraded_mode, "test config".to_string())
-            .await
-            .unwrap();
+        let server = IpcServer::new(
+            &socket_path,
+            storage,
+            mode,
+            degraded_mode,
+            "test config".to_string(),
+        )
+        .await
+        .unwrap();
 
         let tx = server.event_sender();
         // Can create multiple receivers
@@ -522,9 +524,15 @@ mod tests {
         let mode = Arc::new(RwLock::new("block".to_string()));
         let degraded_mode = Arc::new(RwLock::new(false));
 
-        let server = IpcServer::new(&socket_path, storage, mode, degraded_mode, "test config".to_string())
-            .await
-            .unwrap();
+        let server = IpcServer::new(
+            &socket_path,
+            storage,
+            mode,
+            degraded_mode,
+            "test config".to_string(),
+        )
+        .await
+        .unwrap();
 
         let state = server.state();
         assert_eq!(state.config_toml, "test config");
@@ -542,7 +550,8 @@ mod tests {
         let storage = Arc::new(Storage::in_memory().unwrap());
         let mode = Arc::new(RwLock::new("block".to_string()));
         let degraded_mode = Arc::new(RwLock::new(false));
-        let server = IpcServer::new(&socket_path, storage, mode, degraded_mode, String::new()).await;
+        let server =
+            IpcServer::new(&socket_path, storage, mode, degraded_mode, String::new()).await;
 
         // Should succeed and replace the existing file
         assert!(server.is_ok());
@@ -560,7 +569,8 @@ mod tests {
         let storage = Arc::new(Storage::in_memory().unwrap());
         let mode = Arc::new(RwLock::new("block".to_string()));
         let degraded_mode = Arc::new(RwLock::new(false));
-        let server = IpcServer::new(&socket_path, storage, mode, degraded_mode, String::new()).await;
+        let server =
+            IpcServer::new(&socket_path, storage, mode, degraded_mode, String::new()).await;
 
         // Should create parent dirs and succeed
         assert!(server.is_ok());

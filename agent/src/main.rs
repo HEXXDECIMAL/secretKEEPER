@@ -113,7 +113,8 @@ async fn run_agent(args: &Args, config: Config) -> Result<()> {
         mode.clone(),
         degraded_mode.clone(),
         config_toml,
-    ).await?;
+    )
+    .await?;
     tracing::info!("IPC socket: {}", config.agent.socket_path.display());
 
     // Get event sender for monitor
@@ -526,10 +527,7 @@ async fn show_status(args: &Args) -> Result<()> {
         match UnixStream::connect(&config.agent.socket_path).await {
             Ok(stream) => {
                 let (reader, mut writer) = stream.into_split();
-                writer
-                    .write_all(b"{\"action\":\"status\"}\n")
-                    .await
-                    .ok();
+                writer.write_all(b"{\"action\":\"status\"}\n").await.ok();
 
                 let mut reader = BufReader::new(reader);
                 let mut response = String::new();

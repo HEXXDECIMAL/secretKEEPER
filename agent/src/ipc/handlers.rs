@@ -28,7 +28,12 @@ pub struct HandlerState {
 }
 
 impl HandlerState {
-    pub fn new(storage: Arc<Storage>, mode: Arc<RwLock<String>>, degraded_mode: Arc<RwLock<bool>>, config_toml: String) -> Self {
+    pub fn new(
+        storage: Arc<Storage>,
+        mode: Arc<RwLock<String>>,
+        degraded_mode: Arc<RwLock<bool>>,
+        config_toml: String,
+    ) -> Self {
         Self {
             storage,
             mode,
@@ -150,10 +155,8 @@ impl HandlerState {
 
         match self.storage.get_violations(limit, since) {
             Ok(violations) => {
-                let events: Vec<ViolationEvent> = violations
-                    .into_iter()
-                    .map(violation_to_event)
-                    .collect();
+                let events: Vec<ViolationEvent> =
+                    violations.into_iter().map(violation_to_event).collect();
                 Response::Violations { events }
             }
             Err(e) => Response::error(format!("Failed to get violations: {}", e)),
@@ -226,10 +229,7 @@ impl HandlerState {
                         }
                     }
                     None => {
-                        tracing::warn!(
-                            "PID {} too large for signal operation",
-                            event.process_pid
-                        );
+                        tracing::warn!("PID {} too large for signal operation", event.process_pid);
                     }
                 }
             }
@@ -373,7 +373,12 @@ mod tests {
         let storage = Arc::new(Storage::open(&db_path).unwrap());
         let mode = Arc::new(RwLock::new("block".to_string()));
         let degraded_mode = Arc::new(RwLock::new(false));
-        let state = HandlerState::new(storage, mode, degraded_mode, "[agent]\nlog_level = \"info\"".to_string());
+        let state = HandlerState::new(
+            storage,
+            mode,
+            degraded_mode,
+            "[agent]\nlog_level = \"info\"".to_string(),
+        );
         (state, temp_dir)
     }
 
@@ -421,7 +426,11 @@ mod tests {
     async fn test_handle_set_mode_valid() {
         let (state, _dir) = create_test_state();
 
-        let response = state.handle(Request::SetMode { mode: "monitor".to_string() }).await;
+        let response = state
+            .handle(Request::SetMode {
+                mode: "monitor".to_string(),
+            })
+            .await;
         match response {
             Response::Success { message } => assert!(message.contains("monitor")),
             _ => panic!("Expected Success response"),
@@ -436,7 +445,11 @@ mod tests {
     async fn test_handle_set_mode_invalid() {
         let (state, _dir) = create_test_state();
 
-        let response = state.handle(Request::SetMode { mode: "invalid".to_string() }).await;
+        let response = state
+            .handle(Request::SetMode {
+                mode: "invalid".to_string(),
+            })
+            .await;
         match response {
             Response::Error { message, .. } => assert!(message.contains("Invalid mode")),
             _ => panic!("Expected Error response"),
@@ -452,7 +465,11 @@ mod tests {
         let (state, _dir) = create_test_state();
         let response = state.handle(Request::Status).await;
         match response {
-            Response::Status { mode, events_pending, .. } => {
+            Response::Status {
+                mode,
+                events_pending,
+                ..
+            } => {
                 assert_eq!(mode, "block");
                 assert_eq!(events_pending, 0);
             }
@@ -473,7 +490,13 @@ mod tests {
     #[tokio::test]
     async fn test_handle_get_violations_empty() {
         let (state, _dir) = create_test_state();
-        let response = state.handle(Request::GetViolations { limit: None, since: None, file_path: None }).await;
+        let response = state
+            .handle(Request::GetViolations {
+                limit: None,
+                since: None,
+                file_path: None,
+            })
+            .await;
         match response {
             Response::Violations { events } => assert!(events.is_empty()),
             _ => panic!("Expected Violations response"),
@@ -493,14 +516,16 @@ mod tests {
     #[tokio::test]
     async fn test_handle_add_exception_valid() {
         let (state, _dir) = create_test_state();
-        let response = state.handle(Request::AddException {
-            process_path: Some("/usr/bin/test".to_string()),
-            code_signer: None,
-            file_pattern: "~/.ssh/*".to_string(),
-            is_glob: true,
-            expires_at: None,
-            comment: Some("Test exception".to_string()),
-        }).await;
+        let response = state
+            .handle(Request::AddException {
+                process_path: Some("/usr/bin/test".to_string()),
+                code_signer: None,
+                file_pattern: "~/.ssh/*".to_string(),
+                is_glob: true,
+                expires_at: None,
+                comment: Some("Test exception".to_string()),
+            })
+            .await;
         match response {
             Response::Success { message } => assert!(message.contains("Exception added")),
             _ => panic!("Expected Success response"),
@@ -514,14 +539,16 @@ mod tests {
     #[tokio::test]
     async fn test_handle_add_exception_with_code_signer() {
         let (state, _dir) = create_test_state();
-        let response = state.handle(Request::AddException {
-            process_path: None,
-            code_signer: Some("APPLE123".to_string()),
-            file_pattern: "~/.ssh/*".to_string(),
-            is_glob: true,
-            expires_at: None,
-            comment: None,
-        }).await;
+        let response = state
+            .handle(Request::AddException {
+                process_path: None,
+                code_signer: Some("APPLE123".to_string()),
+                file_pattern: "~/.ssh/*".to_string(),
+                is_glob: true,
+                expires_at: None,
+                comment: None,
+            })
+            .await;
         match response {
             Response::Success { message } => assert!(message.contains("Exception added")),
             _ => panic!("Expected Success response"),
@@ -531,14 +558,16 @@ mod tests {
     #[tokio::test]
     async fn test_handle_add_exception_invalid_no_identifier() {
         let (state, _dir) = create_test_state();
-        let response = state.handle(Request::AddException {
-            process_path: None,
-            code_signer: None,
-            file_pattern: "~/.ssh/*".to_string(),
-            is_glob: true,
-            expires_at: None,
-            comment: None,
-        }).await;
+        let response = state
+            .handle(Request::AddException {
+                process_path: None,
+                code_signer: None,
+                file_pattern: "~/.ssh/*".to_string(),
+                is_glob: true,
+                expires_at: None,
+                comment: None,
+            })
+            .await;
         match response {
             Response::Error { message, .. } => {
                 assert!(message.contains("process_path") || message.contains("code_signer"))
@@ -590,7 +619,11 @@ mod tests {
     #[tokio::test]
     async fn test_handle_allow_once_not_found() {
         let (state, _dir) = create_test_state();
-        let response = state.handle(Request::AllowOnce { event_id: "nonexistent".to_string() }).await;
+        let response = state
+            .handle(Request::AllowOnce {
+                event_id: "nonexistent".to_string(),
+            })
+            .await;
         match response {
             Response::Error { message, .. } => assert!(message.contains("not found")),
             _ => panic!("Expected Error response"),
@@ -600,7 +633,11 @@ mod tests {
     #[tokio::test]
     async fn test_handle_kill_not_found() {
         let (state, _dir) = create_test_state();
-        let response = state.handle(Request::Kill { event_id: "nonexistent".to_string() }).await;
+        let response = state
+            .handle(Request::Kill {
+                event_id: "nonexistent".to_string(),
+            })
+            .await;
         match response {
             Response::Error { message, .. } => assert!(message.contains("not found")),
             _ => panic!("Expected Error response"),
@@ -669,11 +706,13 @@ mod tests {
     #[tokio::test]
     async fn test_handle_allow_permanently_not_found() {
         let (state, _dir) = create_test_state();
-        let response = state.handle(Request::AllowPermanently {
-            event_id: "nonexistent".to_string(),
-            expires_at: None,
-            comment: None,
-        }).await;
+        let response = state
+            .handle(Request::AllowPermanently {
+                event_id: "nonexistent".to_string(),
+                expires_at: None,
+                comment: None,
+            })
+            .await;
         match response {
             Response::Error { message, .. } => assert!(message.contains("not found")),
             _ => panic!("Expected Error response"),
@@ -709,18 +748,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_violation_to_event() {
-        let violation = Violation::new(
-            "~/.ssh/id_rsa",
-            "/usr/bin/cat".to_string(),
-            1234,
-            "blocked",
-        )
-        .with_rule_id("ssh_keys")
-        .with_ppid(1)
-        .with_euid(501)
-        .with_cmdline("cat ~/.ssh/id_rsa")
-        .with_team_id("APPLE123")
-        .with_signing_id("com.apple.cat");
+        let violation =
+            Violation::new("~/.ssh/id_rsa", "/usr/bin/cat".to_string(), 1234, "blocked")
+                .with_rule_id("ssh_keys")
+                .with_ppid(1)
+                .with_euid(501)
+                .with_cmdline("cat ~/.ssh/id_rsa")
+                .with_team_id("APPLE123")
+                .with_signing_id("com.apple.cat");
 
         let event = violation_to_event(violation.clone());
 

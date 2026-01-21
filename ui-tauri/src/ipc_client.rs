@@ -119,7 +119,7 @@ pub enum Response {
     Mode { mode: String },
     Violations { violations: Vec<ViolationEvent> },
     Exceptions { exceptions: Vec<Exception> },
-    Event { event: ViolationEvent },
+    Event { event: Box<ViolationEvent> },
     Pong,
 }
 
@@ -142,6 +142,7 @@ impl IpcClient {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn is_connected(&self) -> bool {
         self.stream.is_some()
     }
@@ -173,7 +174,7 @@ impl IpcClient {
         let response = self.send_request(&Request::Subscribe { filter }).await?;
         match response {
             Response::Ok => Ok(()),
-            Response::Error { message } => Err(io::Error::new(io::ErrorKind::Other, message)),
+            Response::Error { message } => Err(io::Error::other(message)),
             _ => Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "Unexpected response",
@@ -198,7 +199,7 @@ impl IpcClient {
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
 
         match response {
-            Response::Event { event } => Ok(Some(event)),
+            Response::Event { event } => Ok(Some(*event)),
             _ => Ok(None),
         }
     }
@@ -207,7 +208,7 @@ impl IpcClient {
         let response = self.send_request(&Request::Status).await?;
         match response {
             Response::Status { status } => Ok(status),
-            Response::Error { message } => Err(io::Error::new(io::ErrorKind::Other, message)),
+            Response::Error { message } => Err(io::Error::other(message)),
             _ => Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "Unexpected response",
@@ -219,7 +220,7 @@ impl IpcClient {
         let response = self.send_request(&Request::GetMode).await?;
         match response {
             Response::Mode { mode } => Ok(mode),
-            Response::Error { message } => Err(io::Error::new(io::ErrorKind::Other, message)),
+            Response::Error { message } => Err(io::Error::other(message)),
             _ => Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "Unexpected response",
@@ -231,7 +232,7 @@ impl IpcClient {
         let response = self.send_request(&Request::SetMode { mode }).await?;
         match response {
             Response::Ok => Ok(()),
-            Response::Error { message } => Err(io::Error::new(io::ErrorKind::Other, message)),
+            Response::Error { message } => Err(io::Error::other(message)),
             _ => Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "Unexpected response",
@@ -249,7 +250,7 @@ impl IpcClient {
             .await?;
         match response {
             Response::Violations { violations } => Ok(violations),
-            Response::Error { message } => Err(io::Error::new(io::ErrorKind::Other, message)),
+            Response::Error { message } => Err(io::Error::other(message)),
             _ => Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "Unexpected response",
@@ -261,7 +262,7 @@ impl IpcClient {
         let response = self.send_request(&Request::GetExceptions).await?;
         match response {
             Response::Exceptions { exceptions } => Ok(exceptions),
-            Response::Error { message } => Err(io::Error::new(io::ErrorKind::Other, message)),
+            Response::Error { message } => Err(io::Error::other(message)),
             _ => Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "Unexpected response",
@@ -290,7 +291,7 @@ impl IpcClient {
             .await?;
         match response {
             Response::Ok => Ok(()),
-            Response::Error { message } => Err(io::Error::new(io::ErrorKind::Other, message)),
+            Response::Error { message } => Err(io::Error::other(message)),
             _ => Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "Unexpected response",
@@ -302,7 +303,7 @@ impl IpcClient {
         let response = self.send_request(&Request::RemoveException { id }).await?;
         match response {
             Response::Ok => Ok(()),
-            Response::Error { message } => Err(io::Error::new(io::ErrorKind::Other, message)),
+            Response::Error { message } => Err(io::Error::other(message)),
             _ => Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "Unexpected response",
@@ -314,7 +315,7 @@ impl IpcClient {
         let response = self.send_request(&Request::AllowOnce { event_id }).await?;
         match response {
             Response::Ok => Ok(()),
-            Response::Error { message } => Err(io::Error::new(io::ErrorKind::Other, message)),
+            Response::Error { message } => Err(io::Error::other(message)),
             _ => Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "Unexpected response",
@@ -337,7 +338,7 @@ impl IpcClient {
             .await?;
         match response {
             Response::Ok => Ok(()),
-            Response::Error { message } => Err(io::Error::new(io::ErrorKind::Other, message)),
+            Response::Error { message } => Err(io::Error::other(message)),
             _ => Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "Unexpected response",
@@ -349,7 +350,7 @@ impl IpcClient {
         let response = self.send_request(&Request::Kill { event_id }).await?;
         match response {
             Response::Ok => Ok(()),
-            Response::Error { message } => Err(io::Error::new(io::ErrorKind::Other, message)),
+            Response::Error { message } => Err(io::Error::other(message)),
             _ => Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "Unexpected response",
@@ -357,11 +358,12 @@ impl IpcClient {
         }
     }
 
+    #[allow(dead_code)]
     pub async fn ping(&mut self) -> io::Result<()> {
         let response = self.send_request(&Request::Ping).await?;
         match response {
             Response::Pong => Ok(()),
-            Response::Error { message } => Err(io::Error::new(io::ErrorKind::Other, message)),
+            Response::Error { message } => Err(io::Error::other(message)),
             _ => Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "Unexpected response",

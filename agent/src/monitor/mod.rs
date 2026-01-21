@@ -260,7 +260,9 @@ impl MonitorContext {
         }
 
         // Evaluate rules with debug mode for SSH files
-        let decision = self.rule_engine.evaluate_with_debug(context, file_path, is_ssh_file);
+        let decision = self
+            .rule_engine
+            .evaluate_with_debug(context, file_path, is_ssh_file);
 
         match decision {
             Decision::Allow => {
@@ -349,7 +351,8 @@ impl MonitorContext {
         use nix::unistd::Pid;
 
         let pid = Pid::from_raw(pid as i32);
-        kill(pid, Signal::SIGSTOP).map_err(|e| Error::monitor(format!("Failed to suspend process: {}", e)))
+        kill(pid, Signal::SIGSTOP)
+            .map_err(|e| Error::monitor(format!("Failed to suspend process: {}", e)))
     }
 }
 
@@ -363,12 +366,8 @@ pub fn create_monitor(
     #[cfg(target_os = "macos")]
     {
         match mechanism {
-            Mechanism::Eslogger => {
-                Ok(Box::new(macos_eslogger::EsloggerMonitor::new(context)))
-            }
-            Mechanism::Esf => {
-                Err(Error::config("Direct ESF not yet implemented"))
-            }
+            Mechanism::Eslogger => Ok(Box::new(macos_eslogger::EsloggerMonitor::new(context))),
+            Mechanism::Esf => Err(Error::config("Direct ESF not yet implemented")),
             _ => Err(Error::UnsupportedPlatform(format!("{:?}", mechanism))),
         }
     }
@@ -376,9 +375,7 @@ pub fn create_monitor(
     #[cfg(target_os = "linux")]
     {
         match mechanism {
-            Mechanism::Fanotify => {
-                Ok(Box::new(linux_fanotify::FanotifyMonitor::new(context)))
-            }
+            Mechanism::Fanotify => Ok(Box::new(linux_fanotify::FanotifyMonitor::new(context))),
             _ => Err(Error::UnsupportedPlatform(format!("{:?}", mechanism))),
         }
     }
@@ -386,9 +383,7 @@ pub fn create_monitor(
     #[cfg(target_os = "freebsd")]
     {
         match mechanism {
-            Mechanism::Dtrace => {
-                Ok(Box::new(freebsd_dtrace::DtraceMonitor::new(context)))
-            }
+            Mechanism::Dtrace => Ok(Box::new(freebsd_dtrace::DtraceMonitor::new(context))),
             _ => Err(Error::UnsupportedPlatform(format!("{:?}", mechanism))),
         }
     }
@@ -530,9 +525,9 @@ mod tests {
     #[tokio::test]
     async fn test_monitor_context_process_access_not_protected() {
         use crate::config::Config;
+        use crate::process::ProcessContext;
         use crate::rules::RuleEngine;
         use crate::storage::Storage;
-        use crate::process::ProcessContext;
         use std::path::PathBuf;
         use tempfile::TempDir;
 
@@ -555,9 +550,9 @@ mod tests {
     #[tokio::test]
     async fn test_monitor_context_process_access_allowed() {
         use crate::config::{Config, ProtectedFile};
-        use crate::rules::{RuleEngine, AllowRule};
-        use crate::storage::Storage;
         use crate::process::ProcessContext;
+        use crate::rules::{AllowRule, RuleEngine};
+        use crate::storage::Storage;
         use std::path::PathBuf;
         use tempfile::TempDir;
 
@@ -592,9 +587,9 @@ mod tests {
     #[tokio::test]
     async fn test_monitor_context_process_access_denied() {
         use crate::config::{Config, ProtectedFile};
+        use crate::process::ProcessContext;
         use crate::rules::RuleEngine;
         use crate::storage::Storage;
-        use crate::process::ProcessContext;
         use std::path::PathBuf;
         use tempfile::TempDir;
 
@@ -629,9 +624,9 @@ mod tests {
     #[tokio::test]
     async fn test_monitor_context_process_access_excluded() {
         use crate::config::Config;
+        use crate::process::ProcessContext;
         use crate::rules::RuleEngine;
         use crate::storage::Storage;
-        use crate::process::ProcessContext;
         use std::path::PathBuf;
         use tempfile::TempDir;
 
@@ -657,9 +652,9 @@ mod tests {
     #[tokio::test]
     async fn test_monitor_context_mode_logged() {
         use crate::config::{Config, ProtectedFile};
+        use crate::process::ProcessContext;
         use crate::rules::RuleEngine;
         use crate::storage::Storage;
-        use crate::process::ProcessContext;
         use std::path::PathBuf;
         use tempfile::TempDir;
 
@@ -708,7 +703,14 @@ mod tests {
             let mode = Arc::new(tokio::sync::RwLock::new("block".to_string()));
             let degraded_mode = Arc::new(tokio::sync::RwLock::new(false));
 
-            let ctx = Arc::new(MonitorContext::new(config, rule_engine, storage, event_tx, mode, degraded_mode));
+            let ctx = Arc::new(MonitorContext::new(
+                config,
+                rule_engine,
+                storage,
+                event_tx,
+                mode,
+                degraded_mode,
+            ));
             let result = create_monitor(Mechanism::Auto, ctx);
             assert!(result.is_err());
         }

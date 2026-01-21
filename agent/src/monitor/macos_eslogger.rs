@@ -107,7 +107,9 @@ impl super::Monitor for EsloggerMonitor {
             let mut mode = self.context.mode.write().await;
             if mode.as_str() == "block" {
                 *mode = "best-effort".to_string();
-                tracing::info!("Mode: best-effort (eslogger can observe and suspend, not pre-emptively block)");
+                tracing::info!(
+                    "Mode: best-effort (eslogger can observe and suspend, not pre-emptively block)"
+                );
             }
         }
 
@@ -133,7 +135,9 @@ impl super::Monitor for EsloggerMonitor {
                         snapshot.rate_limited
                     );
                 } else {
-                    tracing::info!("Status [eslogger]: idle (no file access events in last minute)");
+                    tracing::info!(
+                        "Status [eslogger]: idle (no file access events in last minute)"
+                    );
                 }
             }
         });
@@ -146,7 +150,7 @@ impl super::Monitor for EsloggerMonitor {
             event_count += 1;
 
             // Log first few events and then every 1000th for debugging
-            if event_count <= 5 || event_count % 1000 == 0 {
+            if event_count <= 5 || event_count.is_multiple_of(1000) {
                 tracing::debug!("eslogger event #{}: {} bytes", event_count, line.len());
             }
 
@@ -172,10 +176,8 @@ impl super::Monitor for EsloggerMonitor {
                         }
 
                         // Check if this is a protected file and handle it
-                        if let Some(violation) = self
-                            .context
-                            .process_access(&file_path, &context)
-                            .await
+                        if let Some(violation) =
+                            self.context.process_access(&file_path, &context).await
                         {
                             tracing::warn!(
                                 "VIOLATION [{}]: {} accessed {} ({})",
@@ -194,7 +196,10 @@ impl super::Monitor for EsloggerMonitor {
                                     } else if mode.as_str() == "best-effort" {
                                         tracing::info!("Best-effort: stopped process {} (file may have been accessed)", pid);
                                     } else {
-                                        tracing::info!("Suspended process {} pending user decision", pid);
+                                        tracing::info!(
+                                            "Suspended process {} pending user decision",
+                                            pid
+                                        );
                                     }
                                 }
                             }
@@ -396,7 +401,8 @@ mod tests {
     fn test_parse_open_event_full() {
         let monitor = create_test_monitor();
 
-        let json: serde_json::Value = serde_json::from_str(r#"{
+        let json: serde_json::Value = serde_json::from_str(
+            r#"{
             "event": {
                 "open": {
                     "file": {
@@ -417,7 +423,9 @@ mod tests {
                 "signing_id": "com.apple.cat",
                 "is_platform_binary": true
             }
-        }"#).unwrap();
+        }"#,
+        )
+        .unwrap();
 
         let result = monitor.parse_open_event(&json);
         assert!(result.is_some());
@@ -437,7 +445,8 @@ mod tests {
     fn test_parse_open_event_minimal() {
         let monitor = create_test_monitor();
 
-        let json: serde_json::Value = serde_json::from_str(r#"{
+        let json: serde_json::Value = serde_json::from_str(
+            r#"{
             "event": {
                 "open": {
                     "file": {
@@ -450,7 +459,9 @@ mod tests {
                     "path": "/usr/bin/cat"
                 }
             }
-        }"#).unwrap();
+        }"#,
+        )
+        .unwrap();
 
         let result = monitor.parse_open_event(&json);
         assert!(result.is_some());
@@ -467,7 +478,8 @@ mod tests {
     fn test_parse_open_event_directory_skipped() {
         let monitor = create_test_monitor();
 
-        let json: serde_json::Value = serde_json::from_str(r#"{
+        let json: serde_json::Value = serde_json::from_str(
+            r#"{
             "event": {
                 "open": {
                     "file": {
@@ -480,7 +492,9 @@ mod tests {
                     "path": "/usr/bin/ls"
                 }
             }
-        }"#).unwrap();
+        }"#,
+        )
+        .unwrap();
 
         let result = monitor.parse_open_event(&json);
         assert!(result.is_none()); // Directories are skipped
@@ -490,7 +504,8 @@ mod tests {
     fn test_parse_open_event_missing_file() {
         let monitor = create_test_monitor();
 
-        let json: serde_json::Value = serde_json::from_str(r#"{
+        let json: serde_json::Value = serde_json::from_str(
+            r#"{
             "event": {
                 "open": {}
             },
@@ -499,7 +514,9 @@ mod tests {
                     "path": "/usr/bin/cat"
                 }
             }
-        }"#).unwrap();
+        }"#,
+        )
+        .unwrap();
 
         let result = monitor.parse_open_event(&json);
         assert!(result.is_none());
@@ -509,7 +526,8 @@ mod tests {
     fn test_parse_open_event_missing_process() {
         let monitor = create_test_monitor();
 
-        let json: serde_json::Value = serde_json::from_str(r#"{
+        let json: serde_json::Value = serde_json::from_str(
+            r#"{
             "event": {
                 "open": {
                     "file": {
@@ -517,7 +535,9 @@ mod tests {
                     }
                 }
             }
-        }"#).unwrap();
+        }"#,
+        )
+        .unwrap();
 
         let result = monitor.parse_open_event(&json);
         assert!(result.is_none());
@@ -527,7 +547,8 @@ mod tests {
     fn test_parse_open_event_missing_executable() {
         let monitor = create_test_monitor();
 
-        let json: serde_json::Value = serde_json::from_str(r#"{
+        let json: serde_json::Value = serde_json::from_str(
+            r#"{
             "event": {
                 "open": {
                     "file": {
@@ -538,7 +559,9 @@ mod tests {
             "process": {
                 "ppid": 1
             }
-        }"#).unwrap();
+        }"#,
+        )
+        .unwrap();
 
         let result = monitor.parse_open_event(&json);
         assert!(result.is_none());
@@ -548,7 +571,8 @@ mod tests {
     fn test_parse_open_event_empty_team_id() {
         let monitor = create_test_monitor();
 
-        let json: serde_json::Value = serde_json::from_str(r#"{
+        let json: serde_json::Value = serde_json::from_str(
+            r#"{
             "event": {
                 "open": {
                     "file": {
@@ -563,7 +587,9 @@ mod tests {
                 "team_id": "",
                 "signing_id": ""
             }
-        }"#).unwrap();
+        }"#,
+        )
+        .unwrap();
 
         let result = monitor.parse_open_event(&json);
         assert!(result.is_some());
@@ -578,7 +604,8 @@ mod tests {
     fn test_parse_open_event_not_open_event() {
         let monitor = create_test_monitor();
 
-        let json: serde_json::Value = serde_json::from_str(r#"{
+        let json: serde_json::Value = serde_json::from_str(
+            r#"{
             "event": {
                 "close": {
                     "file": {
@@ -591,7 +618,9 @@ mod tests {
                     "path": "/usr/bin/cat"
                 }
             }
-        }"#).unwrap();
+        }"#,
+        )
+        .unwrap();
 
         let result = monitor.parse_open_event(&json);
         assert!(result.is_none()); // Not an open event
@@ -609,7 +638,8 @@ mod tests {
             let home_str = home_path.to_string_lossy();
             let test_file = format!("{}/.ssh/id_rsa", home_str);
 
-            let json: serde_json::Value = serde_json::from_str(&format!(r#"{{
+            let json: serde_json::Value = serde_json::from_str(&format!(
+                r#"{{
                 "event": {{
                     "open": {{
                         "file": {{
@@ -625,7 +655,10 @@ mod tests {
                         "euid": {}
                     }}
                 }}
-            }}"#, test_file, current_uid)).unwrap();
+            }}"#,
+                test_file, current_uid
+            ))
+            .unwrap();
 
             let result = monitor.parse_open_event(&json);
             assert!(result.is_some());
@@ -646,7 +679,8 @@ mod tests {
     fn test_parse_open_event_is_platform_binary_false() {
         let monitor = create_test_monitor();
 
-        let json: serde_json::Value = serde_json::from_str(r#"{
+        let json: serde_json::Value = serde_json::from_str(
+            r#"{
             "event": {
                 "open": {
                     "file": {
@@ -660,7 +694,9 @@ mod tests {
                 },
                 "is_platform_binary": false
             }
-        }"#).unwrap();
+        }"#,
+        )
+        .unwrap();
 
         let result = monitor.parse_open_event(&json);
         assert!(result.is_some());
@@ -673,7 +709,8 @@ mod tests {
     fn test_parse_open_event_missing_is_platform_binary() {
         let monitor = create_test_monitor();
 
-        let json: serde_json::Value = serde_json::from_str(r#"{
+        let json: serde_json::Value = serde_json::from_str(
+            r#"{
             "event": {
                 "open": {
                     "file": {
@@ -686,7 +723,9 @@ mod tests {
                     "path": "/usr/bin/cat"
                 }
             }
-        }"#).unwrap();
+        }"#,
+        )
+        .unwrap();
 
         let result = monitor.parse_open_event(&json);
         assert!(result.is_some());

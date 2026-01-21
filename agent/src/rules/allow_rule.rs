@@ -441,14 +441,12 @@ where
             }
 
             if let Some(dash_pos) = value.find('-') {
-                let start = value[..dash_pos]
-                    .trim()
-                    .parse::<u32>()
-                    .map_err(|_| E::custom(format!("Invalid range start: {}", &value[..dash_pos])))?;
-                let end = value[dash_pos + 1..]
-                    .trim()
-                    .parse::<u32>()
-                    .map_err(|_| E::custom(format!("Invalid range end: {}", &value[dash_pos + 1..])))?;
+                let start = value[..dash_pos].trim().parse::<u32>().map_err(|_| {
+                    E::custom(format!("Invalid range start: {}", &value[..dash_pos]))
+                })?;
+                let end = value[dash_pos + 1..].trim().parse::<u32>().map_err(|_| {
+                    E::custom(format!("Invalid range end: {}", &value[dash_pos + 1..]))
+                })?;
 
                 if start > end {
                     return Err(E::custom(format!("Invalid range: {} > {}", start, end)));
@@ -480,7 +478,10 @@ mod tests {
         assert!(!matches_pattern("com.apple.*", "com.google.chrome"));
         assert!(matches_pattern("firefox", "firefox"));
         assert!(!matches_pattern("firefox", "chrome"));
-        assert!(matches_pattern("docker-credential-*", "docker-credential-desktop"));
+        assert!(matches_pattern(
+            "docker-credential-*",
+            "docker-credential-desktop"
+        ));
         assert!(matches_pattern("python*", "python3.11"));
         assert!(!matches_pattern("python*", "ruby"));
     }
@@ -789,12 +790,12 @@ mod tests {
             ..Default::default()
         };
 
-        let ctx = ProcessContext::new(PathBuf::from("/usr/bin/test"))
-            .with_app_id("com.apple.Terminal");
+        let ctx =
+            ProcessContext::new(PathBuf::from("/usr/bin/test")).with_app_id("com.apple.Terminal");
         assert!(rule.matches(&ctx));
 
-        let ctx2 = ProcessContext::new(PathBuf::from("/usr/bin/test"))
-            .with_app_id("com.google.chrome");
+        let ctx2 =
+            ProcessContext::new(PathBuf::from("/usr/bin/test")).with_app_id("com.google.chrome");
         assert!(!rule.matches(&ctx2));
 
         // No app_id set
@@ -809,12 +810,12 @@ mod tests {
             ..Default::default()
         };
 
-        let ctx = ProcessContext::new(PathBuf::from("/usr/bin/test"))
-            .with_app_id("com.apple.Safari");
+        let ctx =
+            ProcessContext::new(PathBuf::from("/usr/bin/test")).with_app_id("com.apple.Safari");
         assert!(rule.matches(&ctx));
 
-        let ctx2 = ProcessContext::new(PathBuf::from("/usr/bin/test"))
-            .with_app_id("org.mozilla.firefox");
+        let ctx2 =
+            ProcessContext::new(PathBuf::from("/usr/bin/test")).with_app_id("org.mozilla.firefox");
         assert!(!rule.matches(&ctx2));
     }
 
@@ -825,8 +826,11 @@ mod tests {
             ..Default::default()
         };
 
-        let ctx = ProcessContext::new(PathBuf::from("/usr/bin/app"))
-            .with_args(vec!["app".to_string(), "--config".to_string(), "/etc/app.conf".to_string()]);
+        let ctx = ProcessContext::new(PathBuf::from("/usr/bin/app")).with_args(vec![
+            "app".to_string(),
+            "--config".to_string(),
+            "/etc/app.conf".to_string(),
+        ]);
         assert!(rule.matches(&ctx));
 
         let ctx2 = ProcessContext::new(PathBuf::from("/usr/bin/app"))
@@ -845,12 +849,18 @@ mod tests {
             ..Default::default()
         };
 
-        let ctx = ProcessContext::new(PathBuf::from("/usr/bin/ssh"))
-            .with_args(vec!["ssh".to_string(), "-l".to_string(), "user".to_string()]);
+        let ctx = ProcessContext::new(PathBuf::from("/usr/bin/ssh")).with_args(vec![
+            "ssh".to_string(),
+            "-l".to_string(),
+            "user".to_string(),
+        ]);
         assert!(rule.matches(&ctx));
 
-        let ctx2 = ProcessContext::new(PathBuf::from("/usr/bin/ssh"))
-            .with_args(vec!["ssh".to_string(), "-i".to_string(), "key".to_string()]);
+        let ctx2 = ProcessContext::new(PathBuf::from("/usr/bin/ssh")).with_args(vec![
+            "ssh".to_string(),
+            "-i".to_string(),
+            "key".to_string(),
+        ]);
         assert!(!rule.matches(&ctx2));
 
         // No args

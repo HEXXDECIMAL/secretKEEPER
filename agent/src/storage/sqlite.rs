@@ -172,7 +172,11 @@ impl Storage {
     }
 
     /// Get recent violations.
-    pub fn get_violations(&self, limit: usize, since: Option<DateTime<Utc>>) -> Result<Vec<Violation>> {
+    pub fn get_violations(
+        &self,
+        limit: usize,
+        since: Option<DateTime<Utc>>,
+    ) -> Result<Vec<Violation>> {
         let conn = self.lock();
         let mut violations = Vec::new();
 
@@ -261,9 +265,8 @@ impl Storage {
         let conn = self.lock();
         let mut exceptions = Vec::new();
 
-        let mut stmt = conn.prepare(
-            "SELECT * FROM exceptions WHERE expires_at IS NULL OR expires_at > ?1",
-        )?;
+        let mut stmt =
+            conn.prepare("SELECT * FROM exceptions WHERE expires_at IS NULL OR expires_at > ?1")?;
 
         let now = Utc::now().to_rfc3339();
         let rows = stmt.query(params![now])?;
@@ -455,14 +458,9 @@ mod tests {
     fn test_storage_violations() {
         let storage = Storage::in_memory().unwrap();
 
-        let violation = Violation::new(
-            "~/.ssh/id_rsa",
-            "/usr/bin/cat",
-            1234,
-            "blocked",
-        )
-        .with_rule_id("ssh_keys")
-        .with_euid(501);
+        let violation = Violation::new("~/.ssh/id_rsa", "/usr/bin/cat", 1234, "blocked")
+            .with_rule_id("ssh_keys")
+            .with_euid(501);
 
         storage.record_violation(&violation).unwrap();
 
@@ -509,10 +507,16 @@ mod tests {
         let storage = Storage::in_memory().unwrap();
 
         storage.set_state("mode", "block").unwrap();
-        assert_eq!(storage.get_state("mode").unwrap(), Some("block".to_string()));
+        assert_eq!(
+            storage.get_state("mode").unwrap(),
+            Some("block".to_string())
+        );
 
         storage.set_state("mode", "monitor").unwrap();
-        assert_eq!(storage.get_state("mode").unwrap(), Some("monitor".to_string()));
+        assert_eq!(
+            storage.get_state("mode").unwrap(),
+            Some("monitor".to_string())
+        );
     }
 
     #[test]
@@ -546,35 +550,28 @@ mod tests {
     fn test_violation_with_all_fields() {
         let storage = Storage::in_memory().unwrap();
 
-        let process_tree = vec![
-            ProcessTreeEntry {
-                pid: 1234,
-                ppid: Some(1),
-                name: "cat".to_string(),
-                path: "/usr/bin/cat".to_string(),
-                cwd: Some("/home/user".to_string()),
-                cmdline: Some("cat ~/.ssh/id_rsa".to_string()),
-                uid: Some(501),
-                euid: Some(501),
-                team_id: None,
-                signing_id: Some("com.apple.cat".to_string()),
-                is_platform_binary: true,
-            },
-        ];
+        let process_tree = vec![ProcessTreeEntry {
+            pid: 1234,
+            ppid: Some(1),
+            name: "cat".to_string(),
+            path: "/usr/bin/cat".to_string(),
+            cwd: Some("/home/user".to_string()),
+            cmdline: Some("cat ~/.ssh/id_rsa".to_string()),
+            uid: Some(501),
+            euid: Some(501),
+            team_id: None,
+            signing_id: Some("com.apple.cat".to_string()),
+            is_platform_binary: true,
+        }];
 
-        let violation = Violation::new(
-            "~/.ssh/id_rsa",
-            "/usr/bin/cat",
-            1234,
-            "blocked",
-        )
-        .with_rule_id("ssh_keys")
-        .with_ppid(1)
-        .with_euid(501)
-        .with_cmdline("cat ~/.ssh/id_rsa")
-        .with_team_id("APPLE123")
-        .with_signing_id("com.apple.cat")
-        .with_process_tree(process_tree);
+        let violation = Violation::new("~/.ssh/id_rsa", "/usr/bin/cat", 1234, "blocked")
+            .with_rule_id("ssh_keys")
+            .with_ppid(1)
+            .with_euid(501)
+            .with_cmdline("cat ~/.ssh/id_rsa")
+            .with_team_id("APPLE123")
+            .with_signing_id("com.apple.cat")
+            .with_process_tree(process_tree);
 
         storage.record_violation(&violation).unwrap();
 
@@ -582,7 +579,10 @@ mod tests {
         assert_eq!(retrieved.rule_id, Some("ssh_keys".to_string()));
         assert_eq!(retrieved.process_ppid, Some(1));
         assert_eq!(retrieved.process_euid, Some(501));
-        assert_eq!(retrieved.process_cmdline, Some("cat ~/.ssh/id_rsa".to_string()));
+        assert_eq!(
+            retrieved.process_cmdline,
+            Some("cat ~/.ssh/id_rsa".to_string())
+        );
         assert_eq!(retrieved.team_id, Some("APPLE123".to_string()));
         assert_eq!(retrieved.signing_id, Some("com.apple.cat".to_string()));
         assert_eq!(retrieved.process_tree.len(), 1);
@@ -649,7 +649,10 @@ mod tests {
         assert_eq!(exceptions.len(), 1);
         assert_eq!(exceptions[0].id, id);
         assert!(exceptions[0].process_path.is_none());
-        assert_eq!(exceptions[0].code_signer, Some("APPLE_TEAM_123".to_string()));
+        assert_eq!(
+            exceptions[0].code_signer,
+            Some("APPLE_TEAM_123".to_string())
+        );
     }
 
     #[test]
@@ -754,7 +757,10 @@ mod tests {
 
         assert_eq!(violation.process_ppid, Some(1));
         assert_eq!(violation.process_euid, Some(501));
-        assert_eq!(violation.process_cmdline, Some("cat ~/.ssh/id_rsa".to_string()));
+        assert_eq!(
+            violation.process_cmdline,
+            Some("cat ~/.ssh/id_rsa".to_string())
+        );
         assert_eq!(violation.team_id, Some("APPLE123".to_string()));
         assert_eq!(violation.signing_id, Some("com.apple.cat".to_string()));
     }
@@ -794,5 +800,4 @@ mod tests {
         let exceptions = storage.get_exceptions().unwrap();
         assert!(exceptions.is_empty());
     }
-
 }

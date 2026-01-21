@@ -100,10 +100,7 @@ impl ProcessContext {
 
     /// Returns the process basename.
     pub fn basename(&self) -> &str {
-        self.path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("")
+        self.path.file_name().and_then(|n| n.to_str()).unwrap_or("")
     }
 }
 
@@ -169,7 +166,9 @@ mod tests {
         let ctx = ProcessContext::new(PathBuf::from("/usr/bin/ssh"));
         assert_eq!(ctx.basename(), "ssh");
 
-        let ctx2 = ProcessContext::new(PathBuf::from("/Applications/Firefox.app/Contents/MacOS/firefox"));
+        let ctx2 = ProcessContext::new(PathBuf::from(
+            "/Applications/Firefox.app/Contents/MacOS/firefox",
+        ));
         assert_eq!(ctx2.basename(), "firefox");
     }
 
@@ -191,49 +190,59 @@ mod tests {
 
     #[test]
     fn test_process_context_with_app_id() {
-        let ctx = ProcessContext::new(PathBuf::from("/usr/bin/ssh"))
-            .with_app_id("com.apple.ssh");
+        let ctx = ProcessContext::new(PathBuf::from("/usr/bin/ssh")).with_app_id("com.apple.ssh");
         assert_eq!(ctx.app_id, Some("com.apple.ssh".to_string()));
     }
 
     #[test]
     fn test_process_context_with_signing_id() {
-        let ctx = ProcessContext::new(PathBuf::from("/usr/bin/ssh"))
-            .with_signing_id("com.apple.ssh");
+        let ctx =
+            ProcessContext::new(PathBuf::from("/usr/bin/ssh")).with_signing_id("com.apple.ssh");
         assert_eq!(ctx.signing_id, Some("com.apple.ssh".to_string()));
     }
 
     #[test]
     fn test_process_context_with_args() {
-        let ctx = ProcessContext::new(PathBuf::from("/usr/bin/ssh"))
-            .with_args(vec!["-l".to_string(), "user".to_string(), "host".to_string()]);
-        assert_eq!(ctx.args, Some(vec!["-l".to_string(), "user".to_string(), "host".to_string()]));
+        let ctx = ProcessContext::new(PathBuf::from("/usr/bin/ssh")).with_args(vec![
+            "-l".to_string(),
+            "user".to_string(),
+            "host".to_string(),
+        ]);
+        assert_eq!(
+            ctx.args,
+            Some(vec![
+                "-l".to_string(),
+                "user".to_string(),
+                "host".to_string()
+            ])
+        );
     }
 
     #[test]
     fn test_process_context_with_platform_binary() {
-        let ctx = ProcessContext::new(PathBuf::from("/usr/bin/ssh"))
-            .with_platform_binary(true);
+        let ctx = ProcessContext::new(PathBuf::from("/usr/bin/ssh")).with_platform_binary(true);
         assert_eq!(ctx.platform_binary, Some(true));
 
-        let ctx2 = ProcessContext::new(PathBuf::from("/usr/local/bin/custom"))
-            .with_platform_binary(false);
+        let ctx2 =
+            ProcessContext::new(PathBuf::from("/usr/local/bin/custom")).with_platform_binary(false);
         assert_eq!(ctx2.platform_binary, Some(false));
     }
 
     #[test]
     fn test_process_context_full_builder() {
-        let ctx = ProcessContext::new(PathBuf::from("/Applications/Terminal.app/Contents/MacOS/Terminal"))
-            .with_pid(12345)
-            .with_ppid(1)
-            .with_team_id("APPLE")
-            .with_app_id("com.apple.Terminal")
-            .with_signing_id("com.apple.Terminal")
-            .with_args(vec!["Terminal".to_string()])
-            .with_uid(501)
-            .with_euid(501)
-            .with_platform_binary(true)
-            .with_cwd(PathBuf::from("/Users/testuser"));
+        let ctx = ProcessContext::new(PathBuf::from(
+            "/Applications/Terminal.app/Contents/MacOS/Terminal",
+        ))
+        .with_pid(12345)
+        .with_ppid(1)
+        .with_team_id("APPLE")
+        .with_app_id("com.apple.Terminal")
+        .with_signing_id("com.apple.Terminal")
+        .with_args(vec!["Terminal".to_string()])
+        .with_uid(501)
+        .with_euid(501)
+        .with_platform_binary(true)
+        .with_cwd(PathBuf::from("/Users/testuser"));
 
         assert_eq!(ctx.pid, Some(12345));
         assert_eq!(ctx.ppid, Some(1));
@@ -275,11 +284,9 @@ mod tests {
 
     #[test]
     fn test_process_context_inequality() {
-        let ctx1 = ProcessContext::new(PathBuf::from("/usr/bin/ssh"))
-            .with_pid(1234);
+        let ctx1 = ProcessContext::new(PathBuf::from("/usr/bin/ssh")).with_pid(1234);
 
-        let ctx2 = ProcessContext::new(PathBuf::from("/usr/bin/ssh"))
-            .with_pid(5678);
+        let ctx2 = ProcessContext::new(PathBuf::from("/usr/bin/ssh")).with_pid(5678);
 
         assert_ne!(ctx1, ctx2);
     }

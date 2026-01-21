@@ -23,10 +23,7 @@ pub struct RuleEngine {
 }
 
 impl RuleEngine {
-    pub fn new(
-        protected_files: Vec<ProtectedFile>,
-        global_exclusions: Vec<AllowRule>,
-    ) -> Self {
+    pub fn new(protected_files: Vec<ProtectedFile>, global_exclusions: Vec<AllowRule>) -> Self {
         Self {
             protected_files,
             global_exclusions,
@@ -54,6 +51,7 @@ impl RuleEngine {
     }
 
     /// Evaluate whether a process should be allowed to access a file.
+    #[allow(dead_code)]
     pub fn evaluate(&self, context: &ProcessContext, file_path: &str) -> Decision {
         self.evaluate_with_debug(context, file_path, false)
     }
@@ -194,10 +192,7 @@ mod tests {
         let engine = RuleEngine::new(make_protected_files(), vec![]);
         let ctx = ProcessContext::new(PathBuf::from("/usr/bin/cat"));
 
-        assert_eq!(
-            engine.evaluate(&ctx, "/etc/passwd"),
-            Decision::NotProtected
-        );
+        assert_eq!(engine.evaluate(&ctx, "/etc/passwd"), Decision::NotProtected);
     }
 
     #[test]
@@ -224,8 +219,7 @@ mod tests {
         }];
 
         let engine = RuleEngine::new(make_protected_files(), exclusions);
-        let ctx =
-            ProcessContext::new(PathBuf::from("/usr/bin/cat")).with_team_id("TRUSTED123");
+        let ctx = ProcessContext::new(PathBuf::from("/usr/bin/cat")).with_team_id("TRUSTED123");
 
         assert_eq!(engine.evaluate(&ctx, "~/.ssh/id_rsa"), Decision::Allow);
     }
@@ -409,13 +403,13 @@ mod tests {
         let engine = RuleEngine::new(protected, exclusions);
 
         // Platform binary is allowed even without specific rule
-        let ctx = ProcessContext::new(PathBuf::from("/usr/bin/anything"))
-            .with_platform_binary(true);
+        let ctx =
+            ProcessContext::new(PathBuf::from("/usr/bin/anything")).with_platform_binary(true);
         assert_eq!(engine.evaluate(&ctx, "~/.ssh/id_rsa"), Decision::Allow);
 
         // Non-platform binary is denied
-        let ctx = ProcessContext::new(PathBuf::from("/usr/bin/anything"))
-            .with_platform_binary(false);
+        let ctx =
+            ProcessContext::new(PathBuf::from("/usr/bin/anything")).with_platform_binary(false);
         assert_eq!(engine.evaluate(&ctx, "~/.ssh/id_rsa"), Decision::Deny);
     }
 

@@ -457,7 +457,9 @@ private struct EventResponse: Codable {
         eventDict.removeValue(forKey: "status")
 
         let eventData = try JSONSerialization.data(withJSONObject: eventDict.mapValues { $0.value })
-        event = try JSONDecoder().decode(ViolationEvent.self, from: eventData)
+        let eventDecoder = JSONDecoder()
+        eventDecoder.dateDecodingStrategy = .iso8601
+        event = try eventDecoder.decode(ViolationEvent.self, from: eventData)
     }
 }
 

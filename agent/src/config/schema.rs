@@ -340,10 +340,7 @@ fn default_protected_files() -> Vec<ProtectedFile> {
     vec![
         ProtectedFile {
             id: "ssh_keys".to_string(),
-            patterns: vec![
-                "~/.ssh/id_*".to_string(),
-                "~/.ssh/*_key".to_string(),
-            ],
+            patterns: vec!["~/.ssh/id_*".to_string(), "~/.ssh/*_key".to_string()],
             allow: vec![
                 AllowRule {
                     base: Some("ssh".to_string()),
@@ -398,12 +395,10 @@ fn default_protected_files() -> Vec<ProtectedFile> {
                 "~/.config/gcloud/**/credentials.db".to_string(),
                 "~/.config/gcloud/application_default_credentials.json".to_string(),
             ],
-            allow: vec![
-                AllowRule {
-                    base: Some("gcloud".to_string()),
-                    ..Default::default()
-                },
-            ],
+            allow: vec![AllowRule {
+                base: Some("gcloud".to_string()),
+                ..Default::default()
+            }],
         },
         ProtectedFile {
             id: "kube_config".to_string(),
@@ -497,12 +492,10 @@ fn default_protected_files() -> Vec<ProtectedFile> {
         ProtectedFile {
             id: "cargo_credentials".to_string(),
             patterns: vec!["~/.cargo/credentials.toml".to_string()],
-            allow: vec![
-                AllowRule {
-                    base: Some("cargo".to_string()),
-                    ..Default::default()
-                },
-            ],
+            allow: vec![AllowRule {
+                base: Some("cargo".to_string()),
+                ..Default::default()
+            }],
         },
     ]
 }
@@ -594,7 +587,10 @@ comment = "Deployment tool"
         config.enforcement.mode = "invalid".to_string();
         let result = config.validate();
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Invalid enforcement mode"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Invalid enforcement mode"));
     }
 
     #[test]
@@ -607,7 +603,10 @@ comment = "Deployment tool"
         });
         let result = config.validate();
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("must have an 'id'"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("must have an 'id'"));
     }
 
     #[test]
@@ -620,7 +619,10 @@ comment = "Deployment tool"
         });
         let result = config.validate();
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("at least one pattern"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("at least one pattern"));
     }
 
     #[test]

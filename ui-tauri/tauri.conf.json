@@ -54,6 +54,7 @@
       {
         "label": "alert",
         "title": "Access Blocked",
+        "url": "alert.html",
         "width": 600,
         "height": 500,
         "resizable": false,

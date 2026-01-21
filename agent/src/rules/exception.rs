@@ -277,9 +277,7 @@ mod tests {
 
     #[test]
     fn test_exception_builder_basic() {
-        let exception = ExceptionBuilder::new("~/.ssh/*", "user")
-            .glob(true)
-            .build();
+        let exception = ExceptionBuilder::new("~/.ssh/*", "user").glob(true).build();
 
         assert_eq!(exception.file_pattern, "~/.ssh/*");
         assert!(exception.is_glob);

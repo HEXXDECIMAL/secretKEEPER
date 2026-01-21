@@ -414,12 +414,7 @@ mod tests {
 
     #[test]
     fn test_violation_event_new() {
-        let event = ViolationEvent::new(
-            "~/.ssh/id_rsa",
-            "/usr/bin/cat",
-            1234,
-            "blocked",
-        );
+        let event = ViolationEvent::new("~/.ssh/id_rsa", "/usr/bin/cat", 1234, "blocked");
 
         assert_eq!(event.file_path, "~/.ssh/id_rsa");
         assert_eq!(event.process_path, "/usr/bin/cat");
@@ -431,12 +426,7 @@ mod tests {
 
     #[test]
     fn test_violation_event_serialize() {
-        let event = ViolationEvent::new(
-            "~/.ssh/id_rsa",
-            "/usr/bin/cat",
-            1234,
-            "blocked",
-        );
+        let event = ViolationEvent::new("~/.ssh/id_rsa", "/usr/bin/cat", 1234, "blocked");
 
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains("id_rsa"));
