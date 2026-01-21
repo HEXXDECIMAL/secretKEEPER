@@ -1,0 +1,385 @@
+# SecretKeeper macOS-Specific Configuration
+# Common rules are in default.toml and loaded automatically
+# This file adds macOS-specific protections
+
+# ============================================================================
+# GLOBAL EXCLUSIONS - macOS system processes
+# ============================================================================
+[[global_exclusions]]
+path = "/System/*"
+ppid = 1
+platform_binary = true
+
+[[global_exclusions]]
+path = "/Library/Apple/System/Library/CoreServices/*"
+platform_binary = true
+
+[[global_exclusions]]
+path = "/usr/libexec/*"
+platform_binary = true
+
+# Cloud sync services (GUI apps with ppid=1)
+[[global_exclusions]]
+base = "Dropbox"
+team_id = "G7HH3F8CAK"
+ppid = 1
+
+[[global_exclusions]]
+base = "Google Drive"
+team_id = "EQHXZ8M8AV"
+ppid = 1
+
+[[global_exclusions]]
+base = "OneDrive"
+team_id = "UBF8T346G9"
+ppid = 1
+
+[[global_exclusions]]
+base = "Box Sync"
+team_id = "M5N3QRBRRR"
+ppid = 1
+
+[[global_exclusions]]
+base = "syncthing"
+path = "/usr/local/bin/syncthing"
+ppid = 1
+
+# ============================================================================
+# USER KEYCHAIN FILES - Personal keychains
+# ============================================================================
+[[protected_files]]
+id = "keychain"
+patterns = ["~/Library/Keychains/*.keychain", "~/Library/Keychains/*.keychain-db", "~/Library/Keychains/*/keychain-2.db"]
+
+[[protected_files.allow]]
+platform_binary = true
+euid = "501-599"
+
+[[protected_files.allow]]
+path = "/Applications/*/Contents/MacOS/*"
+euid = "501-599"
+
+[[protected_files.allow]]
+team_id = "W5364U7YZB"
+euid = "501-599"
+
+# ============================================================================
+# SYSTEM KEYCHAIN FILES - Library keychains
+# ============================================================================
+[[protected_files]]
+id = "library_keychain"
+patterns = ["/Library/Keychains/*.keychain", "/Library/Keychains/*.keychain-db"]
+
+[[protected_files.allow]]
+path = "/usr/libexec/*"
+platform_binary = true
+
+[[protected_files.allow]]
+path = "/System/*"
+platform_binary = true
+
+[[protected_files.allow]]
+path = "/usr/sbin/mDNSResponder"
+
+[[protected_files.allow]]
+path = "/Applications/*.app/Contents/MacOS/*"
+euid = "501-1000"
+ppid = 1
+
+[[protected_files.allow]]
+path = "/Applications/*/*.app/Contents/MacOS/*"
+euid = "501-1000"
+ppid = 1
+
+[[protected_files.allow]]
+path = "/usr/bin/security"
+euid = "501-599"
+
+# ============================================================================
+# SYSTEM KEYCHAIN FILES - System Library
+# ============================================================================
+[[protected_files]]
+id = "system_keychain"
+patterns = ["/System/Library/Keychains/*.keychain", "/System/Library/Keychains/*.keychain-db"]
+
+[[protected_files.allow]]
+path = "/usr/libexec/*"
+platform_binary = true
+
+[[protected_files.allow]]
+path = "/System/*"
+platform_binary = true
+
+[[protected_files.allow]]
+team_id = "EQHXZ8M8AV"
+euid = "501-599"
+
+[[protected_files.allow]]
+path = "/Applications/*/Contents/MacOS/*"
+euid = "501-599"
+ppid = 1
+
+[[protected_files.allow]]
+team_id = "W5364U7YZB"
+euid = "501-599"
+
+# ============================================================================
+# BROWSER PASSWORD STORES
+# ============================================================================
+
+# Firefox
+[[protected_files]]
+id = "firefox"
+patterns = ["~/Library/Application Support/Firefox/Profiles/*/logins.json", "~/Library/Application Support/Firefox/Profiles/*/key*.db"]
+
+[[protected_files.allow]]
+team_id = "43AQ936H96"
+euid = "501-599"
+
+# Chrome
+[[protected_files]]
+id = "chrome"
+patterns = ["~/Library/Application Support/Google/Chrome/*/Login Data", "~/Library/Application Support/Google/Chrome Beta/*/Login Data", "~/Library/Application Support/Google/Chrome Canary/*/Login Data"]
+
+[[protected_files.allow]]
+team_id = "EQHXZ8M8AV"
+euid = "501-599"
+
+# Chromium
+[[protected_files]]
+id = "chromium"
+patterns = ["~/Library/Application Support/Chromium/*/Login Data"]
+
+[[protected_files.allow]]
+signing_id = "org.chromium.Chromium"
+euid = "501-599"
+
+# Microsoft Edge
+[[protected_files]]
+id = "edge"
+patterns = ["~/Library/Application Support/Microsoft Edge/*/Login Data"]
+
+[[protected_files.allow]]
+team_id = "UBF8T346G9"
+euid = "501-599"
+
+# Brave
+[[protected_files]]
+id = "brave"
+patterns = ["~/Library/Application Support/BraveSoftware/Brave-Browser/*/Login Data"]
+
+[[protected_files.allow]]
+team_id = "KL8N8XSYF4"
+euid = "501-599"
+
+# Arc Browser
+[[protected_files]]
+id = "arc"
+patterns = ["~/Library/Application Support/Arc/User Data/*/Login Data"]
+
+[[protected_files.allow]]
+team_id = "S6N382Y83G"
+euid = "501-599"
+
+# Vivaldi
+[[protected_files]]
+id = "vivaldi"
+patterns = ["~/Library/Application Support/Vivaldi/*/Login Data"]
+
+[[protected_files.allow]]
+team_id = "4XF3XKFTU9"
+euid = "501-599"
+
+# Opera
+[[protected_files]]
+id = "opera"
+patterns = ["~/Library/Application Support/com.operasoftware.Opera/Login Data", "~/Library/Application Support/com.operasoftware.OperaGX/Login Data"]
+
+[[protected_files.allow]]
+team_id = "A2P9LX4JPN"
+euid = "501-599"
+
+# Zen Browser
+[[protected_files]]
+id = "zen"
+patterns = ["~/Library/Application Support/Zen/Profiles/*/logins.json", "~/Library/Application Support/Zen/Profiles/*/key*.db"]
+
+[[protected_files.allow]]
+team_id = "9V5K9TP787"
+euid = "501-599"
+
+# ============================================================================
+# PASSWORD MANAGERS
+# ============================================================================
+
+# 1Password
+[[protected_files]]
+id = "1password"
+patterns = ["~/Library/Group Containers/*.com.1password/Library/Application Support/1Password/*", "~/Library/Application Support/1Password/*", "~/Library/Containers/com.1password*/Data/*"]
+
+[[protected_files.allow]]
+team_id = "2BUA8C4S2C"
+euid = "501-599"
+
+# Bitwarden
+[[protected_files]]
+id = "bitwarden"
+patterns = ["~/Library/Application Support/Bitwarden/*"]
+
+[[protected_files.allow]]
+team_id = "LTZ2PFU5D6"
+euid = "501-599"
+
+# KeePassXC
+[[protected_files]]
+id = "keepassxc"
+patterns = ["~/*.kdbx", "~/Documents/*.kdbx", "~/Desktop/*.kdbx"]
+
+[[protected_files.allow]]
+team_id = "G2S7P7J672"
+euid = "501-599"
+
+# LastPass
+[[protected_files]]
+id = "lastpass"
+patterns = ["~/Library/Application Support/LastPass/*", "~/Library/Containers/com.lastpass.*/Data/*"]
+
+[[protected_files.allow]]
+team_id = "N24REP3BMN"
+euid = "501-599"
+
+# Dashlane
+[[protected_files]]
+id = "dashlane"
+patterns = ["~/Library/Application Support/Dashlane/*", "~/Library/Containers/com.dashlane.*/Data/*"]
+
+[[protected_files.allow]]
+team_id = "Z3L9C9V3A4"
+euid = "501-599"
+
+# ============================================================================
+# MAIL AND MESSAGING
+# ============================================================================
+
+# Apple Mail
+[[protected_files]]
+id = "mail"
+patterns = ["~/Library/Mail/V*/MailData/Accounts.plist", "~/Library/Mail/V*/MailData/*/Info.plist", "~/Library/Containers/com.apple.mail/Data/Library/Mail/*"]
+
+[[protected_files.allow]]
+platform_binary = true
+signing_id = "com.apple.mail*"
+euid = "501-599"
+
+# Apple Messages
+[[protected_files]]
+id = "messages"
+patterns = ["~/Library/Messages/*", "~/Library/Containers/com.apple.iChat/Data/Library/Messages/*"]
+
+[[protected_files.allow]]
+platform_binary = true
+signing_id = "com.apple.iChat*"
+euid = "501-599"
+
+[[protected_files.allow]]
+platform_binary = true
+signing_id = "com.apple.Messages*"
+euid = "501-599"
+
+# ============================================================================
+# DATABASE CLIENTS
+# ============================================================================
+
+# TablePlus
+[[protected_files]]
+id = "tableplus"
+patterns = ["~/Library/Application Support/com.tinyapp.TablePlus/Data/*"]
+
+[[protected_files.allow]]
+team_id = "2JUAS4JW7F"
+euid = "501-599"
+
+# Sequel Pro/Ace
+[[protected_files]]
+id = "sequel"
+patterns = ["~/Library/Application Support/Sequel Pro/Data/*", "~/Library/Application Support/Sequel Ace/Data/*"]
+
+[[protected_files.allow]]
+team_id = "J2DVJ297PV"
+euid = "501-599"
+
+# Postico
+[[protected_files]]
+id = "postico"
+patterns = ["~/Library/Containers/at.eggerapps.Postico/Data/Library/Application Support/Postico/*"]
+
+[[protected_files.allow]]
+team_id = "9QTB3B3YMV"
+euid = "501-599"
+
+# Navicat
+[[protected_files]]
+id = "navicat"
+patterns = ["~/Library/Application Support/PremiumSoft CyberTech/Navicat CC/*"]
+
+[[protected_files.allow]]
+team_id = "2V7428H326"
+euid = "501-599"
+
+# ============================================================================
+# DEVELOPMENT TOOLS
+# ============================================================================
+
+# Tower (Git client)
+[[protected_files]]
+id = "tower"
+patterns = ["~/Library/Application Support/com.fournova.Tower3/config/*"]
+
+[[protected_files.allow]]
+team_id = "MLT7M394S7"
+euid = "501-599"
+
+# Sourcetree
+[[protected_files]]
+id = "sourcetree"
+patterns = ["~/Library/Application Support/SourceTree/*"]
+
+[[protected_files.allow]]
+team_id = "UPXU4CQZ5P"
+euid = "501-599"
+
+# Fork
+[[protected_files]]
+id = "fork"
+patterns = ["~/Library/Application Support/Fork/*"]
+
+[[protected_files.allow]]
+team_id = "Q9PTD2P6MJ"
+euid = "501-599"
+
+# GitKraken
+[[protected_files]]
+id = "gitkraken"
+patterns = ["~/Library/Application Support/GitKraken/*"]
+
+[[protected_files.allow]]
+team_id = "HV6GQZR9ZK"
+euid = "501-599"
+
+# Transmit (FTP/SFTP client)
+[[protected_files]]
+id = "transmit"
+patterns = ["~/Library/Application Support/Transmit/*", "~/Library/Preferences/com.panic.Transmit.plist"]
+
+[[protected_files.allow]]
+team_id = "VE8FC488U5"
+euid = "501-599"
+
+# GitHub Desktop
+[[protected_files]]
+id = "github_desktop"
+patterns = ["~/Library/Application Support/GitHub Desktop/*", "~/Library/Application Support/com.github.GitHubClient/*"]
+
+[[protected_files.allow]]
+team_id = "VEKTX9H2N7"
+euid = "501-599"

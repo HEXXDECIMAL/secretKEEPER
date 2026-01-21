@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SecretKeeper</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div id="app">
+        <nav class="sidebar">
+            <div class="logo">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+                    <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                </svg>
+                <span>SecretKeeper</span>
+            </div>
+
+            <div class="nav-items">
+                <a href="#" class="nav-item active" data-view="dashboard">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="3" y="3" width="7" height="9"/>
+                        <rect x="14" y="3" width="7" height="5"/>
+                        <rect x="14" y="12" width="7" height="9"/>
+                        <rect x="3" y="16" width="7" height="5"/>
+                    </svg>
+                    Dashboard
+                </a>
+                <a href="#" class="nav-item" data-view="history">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10"/>
+                        <polyline points="12 6 12 12 16 14"/>
+                    </svg>
+                    Violation History
+                </a>
+                <a href="#" class="nav-item" data-view="exceptions">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                        <path d="M9 12l2 2 4-4"/>
+                    </svg>
+                    Exceptions
+                </a>
+                <a href="#" class="nav-item" data-view="settings">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="3"/>
+                        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+                    </svg>
+                    Settings
+                </a>
+            </div>
+
+            <div class="connection-status" id="connection-status">
+                <span class="status-dot disconnected"></span>
+                <span>Disconnected</span>
+            </div>
+        </nav>
+
+        <main class="content">
+            <!-- Dashboard View -->
+            <div id="dashboard-view" class="view active">
+                <h1>Dashboard</h1>
+
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-label">Mode</div>
+                        <div class="stat-value" id="stat-mode">--</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Uptime</div>
+                        <div class="stat-value" id="stat-uptime">--</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Total Violations</div>
+                        <div class="stat-value" id="stat-violations">--</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Active Exceptions</div>
+                        <div class="stat-value" id="stat-exceptions">--</div>
+                    </div>
+                </div>
+
+                <h2>Recent Violations</h2>
+                <div class="violations-list" id="recent-violations">
+                    <div class="empty-state">No recent violations</div>
+                </div>
+            </div>
+
+            <!-- History View -->
+            <div id="history-view" class="view">
+                <div class="view-header">
+                    <h1>Violation History</h1>
+                    <div class="actions">
+                        <input type="text" class="search-input" id="history-search" placeholder="Search violations...">
+                        <button class="btn btn-secondary" id="refresh-history">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M23 4v6h-6"/>
+                                <path d="M1 20v-6h6"/>
+                                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+                            </svg>
+                        </button>
+                        <button class="btn btn-secondary" id="export-history">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                                <polyline points="7 10 12 15 17 10"/>
+                                <line x1="12" y1="15" x2="12" y2="3"/>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="table-container">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Time</th>
+                                <th>Process</th>
+                                <th>File</th>
+                                <th>Action</th>
+                                <th>Signing</th>
+                            </tr>
+                        </thead>
+                        <tbody id="history-table-body">
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Exceptions View -->
+            <div id="exceptions-view" class="view">
+                <div class="view-header">
+                    <h1>Exception Manager</h1>
+                    <button class="btn btn-primary" id="add-exception-btn">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="12" y1="5" x2="12" y2="19"/>
+                            <line x1="5" y1="12" x2="19" y2="12"/>
+                        </svg>
+                        Add Exception
+                    </button>
+                </div>
+
+                <div class="exceptions-list" id="exceptions-list">
+                    <div class="empty-state">No exceptions configured</div>
+                </div>
+            </div>
+
+            <!-- Settings View -->
+            <div id="settings-view" class="view">
+                <h1>Settings</h1>
+
+                <div class="settings-section">
+                    <h2>Enforcement Mode</h2>
+                    <div class="setting-row">
+                        <label class="radio-label">
+                            <input type="radio" name="mode" value="block" checked>
+                            <span>Block</span>
+                            <small>Prevent unauthorized access attempts</small>
+                        </label>
+                    </div>
+                    <div class="setting-row">
+                        <label class="radio-label">
+                            <input type="radio" name="mode" value="monitor">
+                            <span>Monitor Only</span>
+                            <small>Log violations without blocking</small>
+                        </label>
+                    </div>
+                </div>
+
+                <div class="settings-section">
+                    <h2>Data Retention</h2>
+                    <div class="setting-row">
+                        <label>Keep violation history for</label>
+                        <select id="retention-days">
+                            <option value="7">7 days</option>
+                            <option value="30" selected>30 days</option>
+                            <option value="90">90 days</option>
+                            <option value="365">365 days</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="settings-section">
+                    <h2>Connection</h2>
+                    <div class="setting-row">
+                        <label>Socket Path</label>
+                        <code>/var/run/secretkeeper.sock</code>
+                    </div>
+                    <div class="setting-row">
+                        <button class="btn btn-secondary" id="reconnect-btn">Reconnect</button>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Violation Detail Modal -->
+    <div id="violation-modal" class="modal hidden">
+        <div class="modal-backdrop"></div>
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Violation Details</h2>
+                <button class="modal-close">&times;</button>
+            </div>
+            <div class="modal-body" id="violation-detail">
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-danger" id="modal-kill">Kill Process</button>
+                <button class="btn btn-secondary" id="modal-exception">Add Exception...</button>
+                <button class="btn btn-warning" id="modal-allow-once">Allow Once</button>
+                <button class="btn btn-primary" id="modal-allow-always">Always Allow</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add Exception Modal -->
+    <div id="exception-modal" class="modal hidden">
+        <div class="modal-backdrop"></div>
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Add Exception</h2>
+                <button class="modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="exception-form">
+                    <div class="form-group">
+                        <label>Exception Type</label>
+                        <div class="radio-group">
+                            <label class="radio-label">
+                                <input type="radio" name="exception-type" value="process" checked>
+                                Process Path
+                            </label>
+                            <label class="radio-label">
+                                <input type="radio" name="exception-type" value="signer">
+                                Code Signer
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="form-group" id="process-path-group">
+                        <label for="process-path">Process Path Pattern</label>
+                        <input type="text" id="process-path" class="mono" placeholder="/usr/bin/example">
+                    </div>
+
+                    <div class="form-group hidden" id="code-signer-group">
+                        <label for="code-signer">Team ID</label>
+                        <input type="text" id="code-signer" class="mono" placeholder="TEAM123456">
+                    </div>
+
+                    <div class="form-group">
+                        <label for="file-pattern">File Pattern</label>
+                        <input type="text" id="file-pattern" class="mono" placeholder="~/.ssh/*" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="is-glob" checked>
+                            Glob pattern
+                        </label>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="is-permanent" checked>
+                            Permanent exception
+                        </label>
+                    </div>
+
+                    <div class="form-group" id="expiration-group" style="display: none;">
+                        <label for="expires-hours">Expires in (hours)</label>
+                        <input type="number" id="expires-hours" value="24" min="1" max="168">
+                    </div>
+
+                    <div class="form-group">
+                        <label for="comment">Comment (optional)</label>
+                        <textarea id="comment" rows="2"></textarea>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary modal-cancel">Cancel</button>
+                <button class="btn btn-primary" id="save-exception">Create Exception</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

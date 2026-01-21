@@ -1,0 +1,34 @@
+# SecretKeeper FreeBSD-Specific Configuration
+# Common rules are in default.toml and loaded automatically
+# This file adds FreeBSD-specific global exclusions
+
+# ============================================================================
+# GLOBAL EXCLUSIONS - FreeBSD backup utilities
+# ============================================================================
+[[global_exclusions]]
+base = "tarsnap"
+path = "/usr/local/bin/tarsnap"
+
+[[global_exclusions]]
+base = "dump"
+path = "/sbin/dump"
+
+[[global_exclusions]]
+base = "restore"
+path = "/sbin/restore"
+
+[[global_exclusions]]
+base = "duplicity"
+path = "/usr/local/bin/duplicity"
+
+[[global_exclusions]]
+base = "borg"
+path = "/usr/local/bin/borg"
+
+[[global_exclusions]]
+base = "restic"
+path = "/usr/local/bin/restic"
+
+[[global_exclusions]]
+base = "syncthing"
+path = "/usr/local/bin/syncthing"

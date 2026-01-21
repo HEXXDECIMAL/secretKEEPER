@@ -1,0 +1,788 @@
+# SecretKeeper Linux-Specific Configuration
+# Common rules are in default.toml and loaded automatically
+# This file adds Linux-specific protections
+
+# ============================================================================
+# GLOBAL EXCLUSIONS
+# ============================================================================
+[[global_exclusions]]
+base = "syncthing"
+path = "/usr/bin/syncthing"
+ppid = 1
+
+[[global_exclusions]]
+base = "dropbox"
+path = "/opt/dropbox/dropbox*"
+ppid = 1
+
+[[global_exclusions]]
+base = "insync"
+path = "/usr/*bin/insync"
+ppid = 1
+
+# ============================================================================
+# LINUX KEYRINGS
+# ============================================================================
+
+# GNOME Keyring
+[[protected_files]]
+id = "gnome_keyring"
+patterns = ["~/.local/share/keyrings/*", "~/.gnome2/keyrings/*"]
+
+[[protected_files.allow]]
+base = "gnome-keyring-daemon"
+euid = "1000-65533"
+
+[[protected_files.allow]]
+base = "seahorse"
+euid = "1000-65533"
+
+[[protected_files.allow]]
+base = "firefox"
+euid = "1000-65533"
+
+[[protected_files.allow]]
+base = "chromium-browser"
+euid = "1000-65533"
+
+[[protected_files.allow]]
+base = "google-chrome"
+euid = "1000-65533"
+
+[[protected_files.allow]]
+base = "evolution"
+euid = "1000-65533"
+
+# KDE Wallet
+[[protected_files]]
+id = "kwallet"
+patterns = ["~/.local/share/kwalletd/*", "~/.kde*/share/apps/kwallet/*"]
+
+[[protected_files.allow]]
+base = "kwalletd5"
+euid = "1000-65533"
+
+[[protected_files.allow]]
+base = "kwalletmanager"
+euid = "1000-65533"
+
+[[protected_files.allow]]
+base = "konsole"
+euid = "1000-65533"
+
+[[protected_files.allow]]
+base = "dolphin"
+euid = "1000-65533"
+
+[[protected_files.allow]]
+base = "firefox"
+euid = "1000-65533"
+
+# ============================================================================
+# BROWSER PASSWORD STORES
+# ============================================================================
+
+# Firefox
+[[protected_files]]
+id = "firefox"
+patterns = ["~/.mozilla/firefox/*/logins.json", "~/.mozilla/firefox/*/key*.db"]
+
+[[protected_files.allow]]
+base = "firefox"
+ppid = 1
+euid = "1000-65533"
+
+[[protected_files.allow]]
+base = "firefox-esr"
+ppid = 1
+euid = "1000-65533"
+
+# Chrome
+[[protected_files]]
+id = "chrome"
+patterns = ["~/.config/google-chrome/*/Login Data", "~/.config/google-chrome-beta/*/Login Data", "~/.config/google-chrome-unstable/*/Login Data"]
+
+[[protected_files.allow]]
+base = "google-chrome*"
+euid = "1000-65533"
+
+# Chromium
+[[protected_files]]
+id = "chromium"
+patterns = ["~/.config/chromium/*/Login Data", "~/.config/chromium-browser/*/Login Data"]
+
+[[protected_files.allow]]
+base = "chromium*"
+euid = "1000-65533"
+
+# Brave
+[[protected_files]]
+id = "brave"
+patterns = ["~/.config/BraveSoftware/Brave-Browser/*/Login Data"]
+
+[[protected_files.allow]]
+base = "brave*"
+euid = "1000-65533"
+
+# Edge
+[[protected_files]]
+id = "edge"
+patterns = ["~/.config/microsoft-edge/*/Login Data"]
+
+[[protected_files.allow]]
+base = "microsoft-edge*"
+euid = "1000-65533"
+
+# Vivaldi
+[[protected_files]]
+id = "vivaldi"
+patterns = ["~/.config/vivaldi/*/Login Data"]
+
+[[protected_files.allow]]
+base = "vivaldi*"
+euid = "1000-65533"
+
+# Opera
+[[protected_files]]
+id = "opera"
+patterns = ["~/.config/opera/*/Login Data"]
+
+[[protected_files.allow]]
+base = "opera"
+euid = "1000-65533"
+
+# LibreWolf
+[[protected_files]]
+id = "librewolf"
+patterns = ["~/.librewolf/*/logins.json", "~/.librewolf/*/key*.db"]
+
+[[protected_files.allow]]
+base = "librewolf"
+ppid = 1
+euid = "1000-65533"
+
+# Tor Browser
+[[protected_files]]
+id = "tor_browser"
+patterns = ["~/.local/share/torbrowser/tbb/*/Browser/TorBrowser/Data/Browser/profile.default/logins.json"]
+
+[[protected_files.allow]]
+base = "firefox.real"
+ppid = 1
+euid = "1000-65533"
+
+[[protected_files.allow]]
+base = "tor-browser"
+ppid = 1
+euid = "1000-65533"
+
+# ============================================================================
+# PASSWORD MANAGERS
+# ============================================================================
+
+# Bitwarden
+[[protected_files]]
+id = "bitwarden"
+patterns = ["~/.config/Bitwarden/**"]
+
+[[protected_files.allow]]
+base = "bitwarden"
+ppid = 1
+
+[[protected_files.allow]]
+base = "bw"
+
+# KeePassXC
+[[protected_files]]
+id = "keepassxc"
+patterns = ["~/.config/keepassxc/*.kdbx", "~/*.kdbx", "~/Documents/*.kdbx"]
+
+[[protected_files.allow]]
+base = "keepassxc"
+ppid = 1
+
+[[protected_files.allow]]
+base = "keepassxc-cli"
+
+# QtPass
+[[protected_files]]
+id = "qtpass"
+patterns = ["~/.password-store/**/*.gpg"]
+
+[[protected_files.allow]]
+base = "qtpass"
+ppid = 1
+euid = "1000-65533"
+
+# ============================================================================
+# COMMUNICATION APPS
+# ============================================================================
+
+# Discord
+[[protected_files]]
+id = "discord"
+patterns = ["~/.config/discord/Local Storage/leveldb/*", "~/.config/discord/Local State", "~/.config/discord/Cookies"]
+
+[[protected_files.allow]]
+base = "discord"
+euid = "1000-65533"
+
+[[protected_files.allow]]
+base = "Discord"
+euid = "1000-65533"
+
+# Slack
+[[protected_files]]
+id = "slack"
+patterns = ["~/.config/Slack/Local Storage/leveldb/*", "~/.config/Slack/Cookies", "~/.config/Slack/storage/*"]
+
+[[protected_files.allow]]
+base = "slack"
+euid = "1000-65533"
+
+# Signal
+[[protected_files]]
+id = "signal"
+patterns = ["~/.config/Signal/sql/*", "~/.config/Signal/config.json", "~/.config/Signal/Local Storage/leveldb/*"]
+
+[[protected_files.allow]]
+base = "signal-desktop"
+euid = "1000-65533"
+
+# Telegram
+[[protected_files]]
+id = "telegram"
+patterns = ["~/.local/share/TelegramDesktop/tdata/*"]
+
+[[protected_files.allow]]
+base = "telegram-desktop"
+euid = "1000-65533"
+
+[[protected_files.allow]]
+base = "Telegram"
+euid = "1000-65533"
+
+# Element
+[[protected_files]]
+id = "element"
+patterns = ["~/.config/Element/Local Storage/leveldb/*", "~/.config/Element/storage/*"]
+
+[[protected_files.allow]]
+base = "element-desktop"
+euid = "1000-65533"
+
+# ============================================================================
+# EMAIL CLIENTS
+# ============================================================================
+
+# Thunderbird
+[[protected_files]]
+id = "thunderbird"
+patterns = ["~/.thunderbird/*/logins.json"]
+
+[[protected_files.allow]]
+base = "thunderbird"
+ppid = 1
+
+# Evolution
+[[protected_files]]
+id = "evolution"
+patterns = ["~/.config/evolution/mail/accounts.xml"]
+
+[[protected_files.allow]]
+base = "evolution"
+ppid = 1
+
+# ============================================================================
+# DATABASE CLIENTS
+# ============================================================================
+
+# DBeaver
+[[protected_files]]
+id = "dbeaver"
+patterns = ["~/.dbeaver/credentials-config.json", "~/.local/share/DBeaverData/workspace*/.dbeaver/credentials-config.json"]
+
+[[protected_files.allow]]
+base = "dbeaver"
+ppid = 1
+
+[[protected_files.allow]]
+base = "DBeaver"
+ppid = 1
+
+# MySQL Workbench
+[[protected_files]]
+id = "mysql_workbench"
+patterns = ["~/.mysql/workbench/connections.xml", "~/.mysql/workbench/server_instances.xml"]
+
+[[protected_files.allow]]
+base = "mysql-workbench"
+ppid = 1
+
+# pgAdmin
+[[protected_files]]
+id = "pgadmin"
+patterns = ["~/.pgadmin/*", "~/.local/share/pgadmin/*"]
+
+[[protected_files.allow]]
+base = "pgadmin4"
+ppid = 1
+
+# JetBrains DataGrip
+[[protected_files]]
+id = "datagrip"
+patterns = ["~/.config/JetBrains/DataGrip*/options/database.*.xml", "~/.config/JetBrains/IntelliJIdea*/options/database.*.xml"]
+
+[[protected_files.allow]]
+base = "datagrip"
+ppid = 1
+
+[[protected_files.allow]]
+base = "idea*"
+ppid = 1
+
+# ============================================================================
+# DEVELOPMENT TOOLS
+# ============================================================================
+
+# FileZilla
+[[protected_files]]
+id = "filezilla"
+patterns = ["~/.config/filezilla/sitemanager.xml", "~/.config/filezilla/recentservers.xml"]
+
+[[protected_files.allow]]
+base = "filezilla"
+ppid = 1
+
+# GitKraken
+[[protected_files]]
+id = "gitkraken"
+patterns = ["~/.gitkraken/profiles/*"]
+
+[[protected_files.allow]]
+base = "gitkraken"
+ppid = 1
+
+[[protected_files.allow]]
+base = "GitKraken"
+ppid = 1
+
+# Remmina
+[[protected_files]]
+id = "remmina"
+patterns = ["~/.config/remmina/*.remmina", "~/.local/share/remmina/*.remmina"]
+
+[[protected_files.allow]]
+base = "remmina"
+ppid = 1
+
+# FreeRDP
+[[protected_files]]
+id = "freerdp"
+patterns = ["~/.config/freerdp/*"]
+
+[[protected_files.allow]]
+base = "xfreerdp"
+ppid = 1
+
+[[protected_files.allow]]
+base = "wlfreerdp"
+ppid = 1
+
+# ============================================================================
+# VPN CONFIGURATIONS
+# ============================================================================
+
+# OpenVPN
+[[protected_files]]
+id = "openvpn"
+patterns = ["~/.config/openvpn/*", "/etc/openvpn/*.conf", "/etc/openvpn/client/*.conf"]
+
+[[protected_files.allow]]
+base = "openvpn"
+
+# WireGuard
+[[protected_files]]
+id = "wireguard"
+patterns = ["/etc/wireguard/*.conf", "~/.config/wireguard/*.conf"]
+
+[[protected_files.allow]]
+base = "wg"
+
+[[protected_files.allow]]
+base = "wg-quick"
+
+# NetworkManager
+[[protected_files]]
+id = "networkmanager"
+patterns = ["/etc/NetworkManager/system-connections/*"]
+
+[[protected_files.allow]]
+base = "NetworkManager"
+
+[[protected_files.allow]]
+base = "nmcli"
+
+[[protected_files.allow]]
+base = "nm-applet"
+ppid = 1
+
+[[protected_files.allow]]
+base = "nm-connection-editor"
+ppid = 1
+
+# ============================================================================
+# GAMING PLATFORMS
+# ============================================================================
+
+# Steam
+[[protected_files]]
+id = "steam"
+patterns = ["~/.steam/steam/config/loginusers.vdf", "~/.steam/steam/config/config.vdf", "~/.local/share/Steam/config/loginusers.vdf", "~/.local/share/Steam/config/config.vdf"]
+
+[[protected_files.allow]]
+base = "steam"
+euid = "1000-65533"
+
+[[protected_files.allow]]
+base = "steamcmd"
+euid = "1000-65533"
+
+# ============================================================================
+# VIRTUALIZATION - VMware
+# ============================================================================
+
+# VMware Workstation/Player
+[[protected_files]]
+id = "vmware"
+patterns = ["~/.vmware/preferences", "~/.vmware/*/vmware*.vmx", "~/.vmware/credstore/*", "~/.vmware/config"]
+
+[[protected_files.allow]]
+base = "vmware"
+euid = "1000-65533"
+
+[[protected_files.allow]]
+base = "vmware-workstation"
+euid = "1000-65533"
+
+[[protected_files.allow]]
+base = "vmware-player"
+euid = "1000-65533"
+
+[[protected_files.allow]]
+base = "vmrun"
+euid = "1000-65533"
+
+[[protected_files.allow]]
+base = "vmware-vmx"
+euid = "1000-65533"
+
+# VMware vSphere/ESXi CLI
+[[protected_files]]
+id = "vsphere_cli"
+patterns = ["~/.govmomi/credentials.json", "~/.vsphere-cli/*", "~/.vmware/credstore/vicredentials.xml"]
+
+[[protected_files.allow]]
+base = "govc"
+
+[[protected_files.allow]]
+base = "esxcli"
+
+[[protected_files.allow]]
+base = "ovftool"
+
+# VMware PowerCLI
+[[protected_files]]
+id = "powercli"
+patterns = ["~/.config/VMware/PowerCLI/*", "~/.local/share/VMware/credstore/*"]
+
+[[protected_files.allow]]
+base = "pwsh"
+
+[[protected_files.allow]]
+base = "powershell"
+
+# ============================================================================
+# VIRTUALIZATION - Proxmox
+# ============================================================================
+
+[[protected_files]]
+id = "proxmox"
+patterns = ["~/.pveclient", "~/.config/proxmox/*", "/etc/pve/priv/*.key", "/etc/pve/user.cfg"]
+
+[[protected_files.allow]]
+base = "pvesh"
+
+[[protected_files.allow]]
+base = "pvecm"
+
+[[protected_files.allow]]
+base = "pveam"
+
+[[protected_files.allow]]
+base = "pvesm"
+
+[[protected_files.allow]]
+base = "qm"
+
+[[protected_files.allow]]
+base = "pct"
+
+[[protected_files.allow]]
+base = "proxmox-backup-client"
+
+# ============================================================================
+# VIRTUALIZATION - libvirt/QEMU/KVM
+# ============================================================================
+
+[[protected_files]]
+id = "libvirt"
+patterns = ["~/.config/libvirt/auth.conf", "~/.virtinst/*", "/etc/libvirt/*.conf", "/etc/libvirt/qemu/*.xml"]
+
+[[protected_files.allow]]
+base = "virsh"
+
+[[protected_files.allow]]
+base = "virt-manager"
+ppid = 1
+
+[[protected_files.allow]]
+base = "virt-install"
+
+[[protected_files.allow]]
+base = "virt-viewer"
+ppid = 1
+
+[[protected_files.allow]]
+base = "libvirtd"
+
+# ============================================================================
+# VIRTUALIZATION - VirtualBox
+# ============================================================================
+
+[[protected_files]]
+id = "virtualbox"
+patterns = ["~/.config/VirtualBox/*.xml", "~/VirtualBox VMs/*/*.vbox"]
+
+[[protected_files.allow]]
+base = "VirtualBox"
+ppid = 1
+
+[[protected_files.allow]]
+base = "VBoxManage"
+
+[[protected_files.allow]]
+base = "VBoxHeadless"
+
+# ============================================================================
+# VIRTUALIZATION - OpenStack
+# ============================================================================
+
+[[protected_files]]
+id = "openstack"
+patterns = ["~/.config/openstack/clouds.yaml", "~/.config/openstack/secure.yaml", "~/.*-openrc.sh"]
+
+[[protected_files.allow]]
+base = "openstack"
+
+[[protected_files.allow]]
+base = "nova"
+
+[[protected_files.allow]]
+base = "neutron"
+
+[[protected_files.allow]]
+base = "glance"
+
+[[protected_files.allow]]
+base = "cinder"
+
+[[protected_files.allow]]
+base = "swift"
+
+# ============================================================================
+# VIRTUALIZATION - Nutanix
+# ============================================================================
+
+[[protected_files]]
+id = "nutanix"
+patterns = ["~/.nutanix/*", "~/.acli/*", "~/.ncli/*", "~/.config/nutanix/*"]
+
+[[protected_files.allow]]
+base = "acli"
+
+[[protected_files.allow]]
+base = "ncli"
+
+[[protected_files.allow]]
+base = "ncc"
+
+# ============================================================================
+# VIRTUALIZATION - oVirt/RHEV
+# ============================================================================
+
+[[protected_files]]
+id = "ovirt"
+patterns = ["~/.ovirtshellrc", "~/.config/ovirt-shell/*"]
+
+[[protected_files.allow]]
+base = "ovirt-shell"
+
+[[protected_files.allow]]
+base = "engine-config"
+
+[[protected_files.allow]]
+base = "vdsm"
+
+# ============================================================================
+# VIRTUALIZATION - Xen
+# ============================================================================
+
+[[protected_files]]
+id = "xen"
+patterns = ["~/.xenrc", "~/.xcp/*", "/etc/xen/*.cfg"]
+
+[[protected_files.allow]]
+base = "xe"
+
+[[protected_files.allow]]
+base = "xl"
+
+[[protected_files.allow]]
+base = "xapi"
+
+# ============================================================================
+# CRYPTOCURRENCY WALLETS
+# ============================================================================
+
+# Bitcoin
+[[protected_files]]
+id = "bitcoin"
+patterns = ["~/.bitcoin/wallet.dat", "~/.bitcoin/wallets/*.dat"]
+
+[[protected_files.allow]]
+base = "bitcoin-qt"
+euid = "1000-65533"
+
+[[protected_files.allow]]
+base = "bitcoind"
+euid = "1000-65533"
+
+[[protected_files.allow]]
+base = "bitcoin-cli"
+euid = "1000-65533"
+
+# Electrum
+[[protected_files]]
+id = "electrum"
+patterns = ["~/.electrum/wallets/*"]
+
+[[protected_files.allow]]
+base = "electrum"
+euid = "1000-65533"
+
+# Ethereum
+[[protected_files]]
+id = "ethereum"
+patterns = ["~/.ethereum/keystore/*"]
+
+[[protected_files.allow]]
+base = "geth"
+euid = "1000-65533"
+
+[[protected_files.allow]]
+base = "parity"
+euid = "1000-65533"
+
+# Monero
+[[protected_files]]
+id = "monero"
+patterns = ["~/Monero/wallets/*", "~/.bitmonero/*"]
+
+[[protected_files.allow]]
+base = "monero-wallet-gui"
+euid = "1000-65533"
+
+[[protected_files.allow]]
+base = "monero-wallet-cli"
+euid = "1000-65533"
+
+[[protected_files.allow]]
+base = "monerod"
+euid = "1000-65533"
+
+# Exodus
+[[protected_files]]
+id = "exodus"
+patterns = ["~/.config/Exodus/exodus.wallet/*"]
+
+[[protected_files.allow]]
+base = "exodus"
+euid = "1000-65533"
+
+# Atomic Wallet
+[[protected_files]]
+id = "atomic"
+patterns = ["~/.config/atomic/Local Storage/leveldb/*"]
+
+[[protected_files.allow]]
+base = "atomic"
+euid = "1000-65533"
+
+# ============================================================================
+# ADDITIONAL CLOUD PROVIDERS
+# ============================================================================
+
+# Vultr
+[[protected_files]]
+id = "vultr"
+patterns = ["~/.vultr-cli.yaml", "~/.config/vultr/config.yaml"]
+
+[[protected_files.allow]]
+base = "vultr-cli"
+
+# ============================================================================
+# PACKAGE MANAGERS - Additional Linux-specific
+# ============================================================================
+
+# Maven/Java
+[[protected_files]]
+id = "maven"
+patterns = ["~/.m2/settings.xml", "~/.m2/settings-security.xml"]
+
+[[protected_files.allow]]
+base = "mvn"
+
+[[protected_files.allow]]
+base = "maven"
+
+[[protected_files.allow]]
+base = "gradle"
+
+[[protected_files.allow]]
+base = "java"
+
+# Composer (PHP)
+[[protected_files]]
+id = "composer"
+patterns = ["~/.config/composer/auth.json", "~/.composer/auth.json"]
+
+[[protected_files.allow]]
+base = "composer"
+
+[[protected_files.allow]]
+base = "php"
+
+# Podman/Buildah
+[[protected_files]]
+id = "podman"
+patterns = ["~/.config/containers/auth.json"]
+
+[[protected_files.allow]]
+base = "podman"
+
+[[protected_files.allow]]
+base = "buildah"
+
+[[protected_files.allow]]
+base = "skopeo"

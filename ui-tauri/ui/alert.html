@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Access Blocked</title>
+    <link rel="stylesheet" href="styles.css">
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: var(--bg-secondary);
+        }
+
+        .alert-container {
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+
+        .alert-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 16px 20px;
+            background: var(--bg-primary);
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .alert-icon {
+            color: var(--accent-orange);
+        }
+
+        .alert-title h1 {
+            font-size: 18px;
+            margin: 0 0 4px;
+        }
+
+        .alert-title p {
+            font-size: 13px;
+            color: var(--text-secondary);
+            margin: 0;
+        }
+
+        .alert-body {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+        }
+
+        .alert-footer {
+            display: flex;
+            justify-content: space-between;
+            padding: 16px 20px;
+            border-top: 1px solid var(--border-color);
+            background: var(--bg-primary);
+        }
+
+        .alert-footer .left {
+            display: flex;
+            gap: 8px;
+        }
+
+        .alert-footer .right {
+            display: flex;
+            gap: 8px;
+        }
+    </style>
+</head>
+<body>
+    <div class="alert-container">
+        <div class="alert-header">
+            <svg class="alert-icon" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                <line x1="12" y1="9" x2="12" y2="13"/>
+                <line x1="12" y1="17" x2="12.01" y2="17"/>
+            </svg>
+            <div class="alert-title">
+                <h1>Access Blocked</h1>
+                <p>Protected file access detected</p>
+            </div>
+            <div style="flex: 1;"></div>
+            <span class="badge badge-unsigned" id="signing-badge">unsigned</span>
+        </div>
+
+        <div class="alert-body">
+            <div class="detail-section">
+                <h3>Protected File</h3>
+                <div class="detail-row">
+                    <span class="detail-label">Path</span>
+                    <span class="detail-value" id="file-path">--</span>
+                </div>
+                <div class="detail-row" id="rule-row" style="display: none;">
+                    <span class="detail-label">Rule</span>
+                    <span class="detail-value" id="rule-id">--</span>
+                </div>
+            </div>
+
+            <div class="detail-section">
+                <h3>Accessing Process</h3>
+                <div class="detail-row">
+                    <span class="detail-label">Path</span>
+                    <span class="detail-value" id="process-path">--</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">PID</span>
+                    <span class="detail-value" id="process-pid">--</span>
+                </div>
+                <div class="detail-row" id="cmdline-row" style="display: none;">
+                    <span class="detail-label">Command</span>
+                    <span class="detail-value" id="process-cmdline">--</span>
+                </div>
+            </div>
+
+            <div class="detail-section" id="signing-section" style="display: none;">
+                <h3>Code Signing</h3>
+                <div class="detail-row" id="team-id-row" style="display: none;">
+                    <span class="detail-label">Team ID</span>
+                    <span class="detail-value" id="team-id">--</span>
+                </div>
+                <div class="detail-row" id="signing-id-row" style="display: none;">
+                    <span class="detail-label">Signing ID</span>
+                    <span class="detail-value" id="signing-id">--</span>
+                </div>
+            </div>
+
+            <div class="detail-section">
+                <h3>Process Tree</h3>
+                <div class="process-tree" id="process-tree">
+                    <div class="empty-state">Loading...</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="alert-footer">
+            <div class="left">
+                <button class="btn btn-danger" id="kill-btn">Kill Process</button>
+            </div>
+            <div class="right">
+                <button class="btn btn-secondary" id="exception-btn">Add Exception...</button>
+                <button class="btn btn-warning" id="allow-once-btn">Allow Once</button>
+                <button class="btn btn-primary" id="allow-always-btn">Always Allow</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const { invoke } = window.__TAURI__.tauri;
+        const { listen } = window.__TAURI__.event;
+        const { appWindow } = window.__TAURI__.window;
+
+        let currentViolation = null;
+
+        // Listen for violation events
+        listen('violation', (event) => {
+            currentViolation = event.payload;
+            renderViolation(currentViolation);
+        });
+
+        function renderViolation(v) {
+            document.getElementById('file-path').textContent = v.file_path;
+            document.getElementById('process-path').textContent = v.process_path;
+            document.getElementById('process-pid').textContent = v.process_pid;
+
+            // Rule
+            if (v.rule_id) {
+                document.getElementById('rule-row').style.display = 'flex';
+                document.getElementById('rule-id').textContent = v.rule_id;
+            }
+
+            // Command line
+            if (v.process_cmdline) {
+                document.getElementById('cmdline-row').style.display = 'flex';
+                document.getElementById('process-cmdline').textContent = v.process_cmdline;
+            }
+
+            // Signing
+            const signingBadge = document.getElementById('signing-badge');
+            signingBadge.textContent = v.signing_status;
+            signingBadge.className = `badge badge-${v.signing_status}`;
+
+            if (v.team_id || v.signing_id) {
+                document.getElementById('signing-section').style.display = 'block';
+                if (v.team_id) {
+                    document.getElementById('team-id-row').style.display = 'flex';
+                    document.getElementById('team-id').textContent = v.team_id;
+                }
+                if (v.signing_id) {
+                    document.getElementById('signing-id-row').style.display = 'flex';
+                    document.getElementById('signing-id').textContent = v.signing_id;
+                }
+            }
+
+            // Process tree
+            renderProcessTree(v.process_tree);
+        }
+
+        function renderProcessTree(tree) {
+            const container = document.getElementById('process-tree');
+
+            if (!tree || tree.length === 0) {
+                container.innerHTML = '<div class="empty-state">No process tree available</div>';
+                return;
+            }
+
+            container.innerHTML = tree.map((entry, index) => {
+                const status = getSigningStatus(entry);
+                return `
+                    <div class="process-tree-entry">
+                        <div class="tree-indent">
+                            ${Array(index).fill('<div class="tree-line"></div>').join('')}
+                            ${index > 0 ? '<div class="tree-connector"></div>' : ''}
+                        </div>
+                        <span class="badge badge-${status}" style="margin-right: 8px; width: 8px; height: 8px; padding: 0; border-radius: 50%;"></span>
+                        <div class="process-info">
+                            <div class="process-name">
+                                <span class="name">${entry.name}</span>
+                                <span class="pid">PID ${entry.pid}</span>
+                                ${entry.ppid ? `<span class="pid">PPID ${entry.ppid}</span>` : ''}
+                            </div>
+                            <div class="process-path">${entry.path}</div>
+                            <div class="process-meta">
+                                ${entry.euid !== undefined ? `<span>UID ${entry.euid}</span>` : ''}
+                                ${entry.cwd ? `<span>${entry.cwd}</span>` : ''}
+                                ${entry.team_id ? `<span>${entry.team_id}</span>` : ''}
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function getSigningStatus(entry) {
+            if (entry.is_platform_binary) return 'platform';
+            if (entry.team_id || entry.signing_id) return 'signed';
+            return 'unsigned';
+        }
+
+        // Button handlers
+        document.getElementById('kill-btn').addEventListener('click', async () => {
+            if (currentViolation) {
+                await invoke('kill_process', { eventId: currentViolation.id });
+                appWindow.hide();
+            }
+        });
+
+        document.getElementById('allow-once-btn').addEventListener('click', async () => {
+            if (currentViolation) {
+                await invoke('allow_once', { eventId: currentViolation.id });
+                appWindow.hide();
+            }
+        });
+
+        document.getElementById('allow-always-btn').addEventListener('click', async () => {
+            if (currentViolation) {
+                await invoke('allow_permanently', {
+                    eventId: currentViolation.id,
+                    expiresHours: null,
+                    comment: null
+                });
+                appWindow.hide();
+            }
+        });
+
+        document.getElementById('exception-btn').addEventListener('click', async () => {
+            // For now, just allow permanently with a note
+            // A full implementation would open an exception dialog
+            if (currentViolation) {
+                await invoke('allow_permanently', {
+                    eventId: currentViolation.id,
+                    expiresHours: null,
+                    comment: 'Added via alert dialog'
+                });
+                appWindow.hide();
+            }
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,694 @@
+# SecretKeeper Default Configuration
+# Common rules shared across all platforms
+
+[agent]
+log_level = "info"
+# socket_path and database_path use platform defaults
+
+[monitoring]
+mechanism = "auto"
+buffer_size = 1000
+max_events_per_sec = 100
+
+[enforcement]
+mode = "block"
+suspend_parent = false
+history_retention_days = 30
+
+# ============================================================================
+# USER SSH KEYS - Personal credentials
+# ============================================================================
+[[protected_files]]
+id = "ssh_keys"
+patterns = ["~/.ssh/id_*", "~/.ssh/*_key"]
+
+[[protected_files.allow]]
+base = "ssh"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "ssh-add"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "ssh-agent"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "ssh-keygen"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "scp"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "sftp"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "rsync"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "git"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "mosh"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "mosh-client"
+euid = "501-65533"
+
+# ============================================================================
+# SYSTEM SSH HOST KEYS - Server keys (root only)
+# ============================================================================
+[[protected_files]]
+id = "ssh_host_keys"
+patterns = ["/etc/ssh/ssh_host_*_key"]
+
+[[protected_files.allow]]
+base = "sshd"
+euid = "0"
+
+[[protected_files.allow]]
+base = "ssh-keygen"
+euid = "0"
+
+# ============================================================================
+# ROOT SSH KEYS
+# ============================================================================
+[[protected_files]]
+id = "root_ssh_keys"
+patterns = ["/root/.ssh/id_*", "/root/.ssh/*_key", "/var/root/.ssh/id_*", "/var/root/.ssh/*_key"]
+
+[[protected_files.allow]]
+base = "ssh"
+euid = "0"
+
+[[protected_files.allow]]
+base = "scp"
+euid = "0"
+
+[[protected_files.allow]]
+base = "rsync"
+euid = "0"
+
+# ============================================================================
+# GPG PRIVATE KEYS
+# ============================================================================
+[[protected_files]]
+id = "gpg_keys"
+patterns = ["~/.gnupg/private-keys-v1.d/*", "~/.gnupg/secring.gpg", "~/.gnupg/trustdb.gpg"]
+
+[[protected_files.allow]]
+base = "gpg"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "gpg2"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "gpg-agent"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "pinentry*"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "pass"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "git"
+euid = "501-65533"
+
+# ============================================================================
+# SHELL HISTORY FILES
+# ============================================================================
+[[protected_files]]
+id = "bash_history"
+patterns = ["~/.bash_history", "/home/*/.bash_history", "/Users/*/.bash_history"]
+
+[[protected_files.allow]]
+base = "bash"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "mcfly"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "atuin"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "fzf"
+euid = "501-65533"
+
+[[protected_files]]
+id = "zsh_history"
+patterns = ["~/.zsh_history", "~/.zhistory", "~/.histfile"]
+
+[[protected_files.allow]]
+base = "zsh"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "mcfly"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "atuin"
+euid = "501-65533"
+
+[[protected_files]]
+id = "fish_history"
+patterns = ["~/.fish_history", "~/.local/share/fish/fish_history"]
+
+[[protected_files.allow]]
+base = "fish"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "mcfly"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "atuin"
+euid = "501-65533"
+
+# ============================================================================
+# AWS CREDENTIALS
+# ============================================================================
+[[protected_files]]
+id = "aws_credentials"
+patterns = ["~/.aws/credentials"]
+
+[[protected_files.allow]]
+base = "aws"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "aws-vault"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "terraform"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "packer"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "ansible*"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "python*"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "sam"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "cdk"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "serverless"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "sls"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "node"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "eksctl"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "docker"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "docker-credential-*"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "pulumi"
+euid = "501-65533"
+
+[[protected_files]]
+id = "aws_session"
+patterns = ["~/.aws/cli/cache/*.json"]
+
+[[protected_files.allow]]
+base = "aws"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "aws-vault"
+euid = "501-65533"
+
+# ============================================================================
+# GOOGLE CLOUD CREDENTIALS
+# ============================================================================
+[[protected_files]]
+id = "gcloud_credentials"
+patterns = ["~/.config/gcloud/access_tokens.db", "~/.config/gcloud/credentials.db"]
+
+[[protected_files.allow]]
+base = "gcloud"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "gsutil"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "bq"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "docker-credential-gcloud"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "python*"
+euid = "501-65533"
+
+[[protected_files]]
+id = "gcp_adc"
+patterns = ["~/.config/gcloud/application_default_credentials.json"]
+
+[[protected_files.allow]]
+euid = "501-65533"
+
+# ============================================================================
+# AZURE CREDENTIALS
+# ============================================================================
+[[protected_files]]
+id = "azure_credentials"
+patterns = ["~/.azure/accessTokens.json", "~/.azure/msal_token_cache.json", "~/.azure/servicePrincipals.json"]
+
+[[protected_files.allow]]
+base = "az"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "terraform"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "pwsh"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "dotnet"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "python*"
+euid = "501-65533"
+
+# ============================================================================
+# OTHER CLOUD PROVIDERS
+# ============================================================================
+[[protected_files]]
+id = "digitalocean"
+patterns = ["~/.config/doctl/config.yaml"]
+
+[[protected_files.allow]]
+base = "doctl"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "terraform"
+euid = "501-65533"
+
+[[protected_files]]
+id = "linode"
+patterns = ["~/.config/linode-cli"]
+
+[[protected_files.allow]]
+base = "linode-cli"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "terraform"
+euid = "501-65533"
+
+[[protected_files]]
+id = "oci"
+patterns = ["~/.oci/config", "~/.oci/*_key.pem"]
+
+[[protected_files.allow]]
+base = "oci"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "terraform"
+euid = "501-65533"
+
+# ============================================================================
+# KUBERNETES CONFIG
+# ============================================================================
+[[protected_files]]
+id = "kube_config"
+patterns = ["~/.kube/config", "~/.kube/*-config"]
+
+[[protected_files.allow]]
+base = "kubectl"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "helm"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "k9s"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "kubectx"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "kubens"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "stern"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "flux"
+euid = "501-65533"
+
+# ============================================================================
+# DOCKER CONFIG
+# ============================================================================
+[[protected_files]]
+id = "docker_config"
+patterns = ["~/.docker/config.json"]
+
+[[protected_files.allow]]
+base = "docker"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "docker-compose"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "podman"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "buildah"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "ko"
+euid = "501-65533"
+
+# ============================================================================
+# PACKAGE MANAGER CREDENTIALS
+# ============================================================================
+[[protected_files]]
+id = "npm_token"
+patterns = ["~/.npmrc"]
+
+[[protected_files.allow]]
+base = "npm"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "node"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "yarn"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "pnpm"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "bun"
+euid = "501-65533"
+
+[[protected_files]]
+id = "pypi_token"
+patterns = ["~/.pypirc"]
+
+[[protected_files.allow]]
+base = "twine"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "poetry"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "python*"
+euid = "501-65533"
+
+[[protected_files]]
+id = "pip_config"
+patterns = ["~/.pip/pip.conf", "~/.config/pip/pip.conf"]
+
+[[protected_files.allow]]
+base = "pip*"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "python*"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "pipenv"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "poetry"
+euid = "501-65533"
+
+[[protected_files]]
+id = "gem_credentials"
+patterns = ["~/.gem/credentials"]
+
+[[protected_files.allow]]
+base = "gem"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "ruby"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "bundle"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "bundler"
+euid = "501-65533"
+
+[[protected_files]]
+id = "cargo_credentials"
+patterns = ["~/.cargo/credentials", "~/.cargo/credentials.toml"]
+
+[[protected_files.allow]]
+base = "cargo"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "rustc"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "rustup"
+euid = "501-65533"
+
+# ============================================================================
+# GIT CREDENTIALS
+# ============================================================================
+[[protected_files]]
+id = "git_credentials"
+patterns = ["~/.git-credentials", "~/.config/git/credentials"]
+
+[[protected_files.allow]]
+base = "git"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "git-credential-*"
+euid = "501-65533"
+
+# ============================================================================
+# DATABASE CREDENTIALS
+# ============================================================================
+[[protected_files]]
+id = "postgresql"
+patterns = ["~/.pgpass"]
+
+[[protected_files.allow]]
+base = "psql"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "pg_dump"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "pg_restore"
+euid = "501-65533"
+
+[[protected_files]]
+id = "mysql"
+patterns = ["~/.my.cnf"]
+
+[[protected_files.allow]]
+base = "mysql"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "mysqldump"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "mariadb"
+euid = "501-65533"
+
+# ============================================================================
+# NETWORK AUTHENTICATION
+# ============================================================================
+[[protected_files]]
+id = "netrc"
+patterns = ["~/.netrc"]
+
+[[protected_files.allow]]
+base = "curl"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "wget"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "ftp"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "git"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "heroku"
+euid = "501-65533"
+
+# ============================================================================
+# DEPLOYMENT PLATFORMS
+# ============================================================================
+[[protected_files]]
+id = "vercel"
+patterns = ["~/.vercel/auth.json", "~/.now/auth.json"]
+
+[[protected_files.allow]]
+base = "vercel"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "now"
+euid = "501-65533"
+
+[[protected_files]]
+id = "netlify"
+patterns = ["~/.netlify/config.json"]
+
+[[protected_files.allow]]
+base = "netlify"
+euid = "501-65533"
+
+[[protected_files]]
+id = "cloudflare"
+patterns = ["~/.cloudflare/config.yaml", "~/.wrangler/config/default.toml"]
+
+[[protected_files.allow]]
+base = "cloudflared"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "wrangler"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "terraform"
+euid = "501-65533"
+
+# ============================================================================
+# SECRETS MANAGEMENT
+# ============================================================================
+[[protected_files]]
+id = "vault_token"
+patterns = ["~/.vault-token"]
+
+[[protected_files.allow]]
+base = "vault"
+euid = "501-65533"
+
+[[protected_files]]
+id = "ansible_vault"
+patterns = ["~/.vault_pass", "~/.ansible_vault_pass"]
+
+[[protected_files.allow]]
+base = "ansible"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "ansible-playbook"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "ansible-vault"
+euid = "501-65533"
+
+[[protected_files]]
+id = "pass_store"
+patterns = ["~/.password-store/**/*.gpg"]
+
+[[protected_files.allow]]
+base = "pass"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "gpg"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "gpg2"
+euid = "501-65533"
+
+# ============================================================================
+# EXCLUDED PATTERNS (not sensitive)
+# ============================================================================
+excluded_patterns = [
+    "~/.ssh/*.pub",
+    "~/.ssh/known_hosts",
+    "~/.ssh/config",
+    "~/.ssh/authorized_keys",
+    "*.crt",
+    "*.cer",
+]
