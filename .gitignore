@@ -27,3 +27,5 @@ build/
 ui/swift/build/
 ui/rust/target/
 target/
+.build/
+
