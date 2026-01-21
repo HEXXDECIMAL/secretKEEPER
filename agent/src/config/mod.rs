@@ -12,12 +12,36 @@ use crate::error::{Error, Result};
 use std::path::Path;
 
 /// Load configuration from a TOML file.
+/// This first loads default.toml from the same directory, then merges
+/// the platform-specific config on top.
 pub fn load_config(path: &Path) -> Result<Config> {
+    // Start with hardcoded defaults (includes SSH keys, AWS creds, etc.)
+    let mut config = Config::default();
+
+    // Try to load default.toml from the same directory
+    if let Some(parent) = path.parent() {
+        let default_path = parent.join("default.toml");
+        if default_path.exists() {
+            let contents = std::fs::read_to_string(&default_path)?;
+            let default_config: Config =
+                toml::from_str(&contents).map_err(|e| Error::ConfigParse {
+                    path: default_path.clone(),
+                    source: e,
+                })?;
+            config.merge(default_config);
+            tracing::debug!("Loaded default config from {}", default_path.display());
+        }
+    }
+
+    // Load the platform-specific config and merge
     let contents = std::fs::read_to_string(path)?;
-    let config: Config = toml::from_str(&contents).map_err(|e| Error::ConfigParse {
+    let platform_config: Config = toml::from_str(&contents).map_err(|e| Error::ConfigParse {
         path: path.to_path_buf(),
         source: e,
     })?;
+    config.merge(platform_config);
+    tracing::debug!("Loaded platform config from {}", path.display());
+
     config.validate()?;
     Ok(config)
 }
@@ -127,8 +151,9 @@ path = "/usr/bin/test"
 
         let config = load_config(file.path()).unwrap();
         assert_eq!(config.agent.log_level, "debug");
-        assert_eq!(config.protected_files.len(), 1);
-        assert_eq!(config.protected_files[0].id, "test");
+        // Config merges with defaults, so we have default protected files + "test"
+        assert!(config.protected_files.iter().any(|p| p.id == "test"));
+        assert!(config.protected_files.iter().any(|p| p.id == "ssh_keys")); // From defaults
     }
 
     #[test]

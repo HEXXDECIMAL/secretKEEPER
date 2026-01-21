@@ -150,12 +150,46 @@ impl RateLimiter {
     #[allow(dead_code)]
     pub fn dropped_count(&self) -> u64 {
         let count = self.count.load(Ordering::SeqCst);
-        if count > self.max_per_sec as u64 {
-            count - self.max_per_sec as u64
-        } else {
-            0
+        count.saturating_sub(self.max_per_sec as u64)
+    }
+}
+
+/// Statistics for monitoring events.
+#[derive(Debug, Default)]
+pub struct EventStats {
+    /// Total file access events received
+    pub events_received: AtomicU64,
+    /// Events that were for protected files
+    pub protected_checks: AtomicU64,
+    /// Accesses that were allowed by rules
+    pub allowed: AtomicU64,
+    /// Accesses that resulted in violations
+    pub violations: AtomicU64,
+    /// Events dropped due to rate limiting
+    pub rate_limited: AtomicU64,
+}
+
+impl EventStats {
+    /// Get current stats and reset counters to zero.
+    pub fn take(&self) -> EventStatsSnapshot {
+        EventStatsSnapshot {
+            events_received: self.events_received.swap(0, Ordering::SeqCst),
+            protected_checks: self.protected_checks.swap(0, Ordering::SeqCst),
+            allowed: self.allowed.swap(0, Ordering::SeqCst),
+            violations: self.violations.swap(0, Ordering::SeqCst),
+            rate_limited: self.rate_limited.swap(0, Ordering::SeqCst),
         }
     }
+}
+
+/// A snapshot of event statistics.
+#[derive(Debug, Clone)]
+pub struct EventStatsSnapshot {
+    pub events_received: u64,
+    pub protected_checks: u64,
+    pub allowed: u64,
+    pub violations: u64,
+    pub rate_limited: u64,
 }
 
 /// Shared context for monitors.
@@ -167,6 +201,7 @@ pub struct MonitorContext {
     pub mode: Arc<tokio::sync::RwLock<String>>,
     pub degraded_mode: Arc<tokio::sync::RwLock<bool>>,
     rate_limiter: RateLimiter,
+    pub stats: EventStats,
 }
 
 impl MonitorContext {
@@ -188,6 +223,7 @@ impl MonitorContext {
             mode,
             degraded_mode,
             rate_limiter: RateLimiter::new(max_events_per_sec),
+            stats: EventStats::default(),
         }
     }
 
@@ -197,8 +233,12 @@ impl MonitorContext {
         file_path: &str,
         context: &ProcessContext,
     ) -> Option<ViolationEvent> {
+        // Track that we received an event
+        self.stats.events_received.fetch_add(1, Ordering::Relaxed);
+
         // Check rate limit first
         if !self.rate_limiter.check().await {
+            self.stats.rate_limited.fetch_add(1, Ordering::Relaxed);
             tracing::trace!("Rate limit exceeded, dropping event for {}", file_path);
             return None;
         }
@@ -209,11 +249,23 @@ impl MonitorContext {
             return None;
         }
 
-        // Evaluate rules
-        let decision = self.rule_engine.evaluate(context, file_path);
+        // Extra debug logging for SSH files
+        let is_ssh_file = file_path.contains(".ssh");
+        if is_ssh_file {
+            tracing::debug!(
+                "Evaluating SSH file access: path={}, process={}",
+                file_path,
+                context.path.display()
+            );
+        }
+
+        // Evaluate rules with debug mode for SSH files
+        let decision = self.rule_engine.evaluate_with_debug(context, file_path, is_ssh_file);
 
         match decision {
             Decision::Allow => {
+                self.stats.protected_checks.fetch_add(1, Ordering::Relaxed);
+                self.stats.allowed.fetch_add(1, Ordering::Relaxed);
                 tracing::trace!(
                     "Allowed: {} accessing {}",
                     context.path.display(),
@@ -226,6 +278,8 @@ impl MonitorContext {
                 None
             }
             Decision::Deny => {
+                self.stats.protected_checks.fetch_add(1, Ordering::Relaxed);
+                self.stats.violations.fetch_add(1, Ordering::Relaxed);
                 let mode = self.mode.read().await;
                 let action = match mode.as_str() {
                     "block" => "blocked",

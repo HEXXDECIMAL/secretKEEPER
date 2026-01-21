@@ -8,107 +8,202 @@ struct MenuBarView: View {
     @EnvironmentObject var appState: AppState
 
     var body: some View {
-        VStack(spacing: 0) {
-            // Header
-            HStack {
-                Image(systemName: "lock.shield.fill")
-                    .foregroundColor(.blue)
-                Text("SecretKeeper")
-                    .font(.headline)
-                Spacer()
-                ConnectionIndicator(isConnected: appState.isConnected)
+        VStack(alignment: .leading, spacing: 12) {
+            // Header with status
+            headerSection
+
+            // Show warning for disabled mode (FDA missing)
+            if appState.agentStatus?.mode == "disabled" {
+                disabledWarning
             }
-            .padding()
-            .background(Color(NSColor.windowBackgroundColor))
 
-            Divider()
-
-            // Status
-            VStack(alignment: .leading, spacing: 8) {
-                if let status = appState.agentStatus {
-                    StatusRow(label: "Mode", value: status.mode.capitalized)
-                    StatusRow(label: "Uptime", value: formatUptime(status.uptimeSecs))
-                    StatusRow(label: "Total Violations", value: "\(status.totalViolations)")
-
-                    // Degraded mode warning
-                    if status.degradedMode {
-                        HStack(alignment: .top, spacing: 8) {
-                            Image(systemName: "xmark.shield.fill")
-                                .foregroundStyle(.red)
-                                .font(.system(size: 14))
-                            Text("Protection DISABLED. Grant Full Disk Access to enable file monitoring.")
-                                .font(.caption)
-                                .foregroundColor(.red)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        .padding(8)
-                        .background(Color.red.opacity(0.1))
-                        .cornerRadius(6)
-                    }
-                } else if appState.isConnected {
-                    Text("Loading status...")
-                        .foregroundColor(.secondary)
-                } else {
-                    Text("Agent not connected")
-                        .foregroundColor(.red)
-                }
+            // Status info
+            if let status = appState.agentStatus {
+                statusSection(status)
+            } else if !appState.isConnected {
+                disconnectedSection
             }
-            .padding()
-            .frame(maxWidth: .infinity, alignment: .leading)
-
-            Divider()
 
             // Pending violations
             if !appState.pendingViolations.isEmpty {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Pending Violations")
-                        .font(.headline)
-                        .foregroundColor(.orange)
-
-                    ForEach(appState.pendingViolations.prefix(3)) { violation in
-                        PendingViolationRow(violation: violation)
-                    }
-
-                    if appState.pendingViolations.count > 3 {
-                        Text("+ \(appState.pendingViolations.count - 3) more...")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                }
-                .padding()
-
-                Divider()
+                violationsSection
             }
 
-            // Quick actions
-            VStack(spacing: 2) {
-                MenuButton(title: "Violation History", icon: "clock.arrow.circlepath") {
-                    openWindow(id: "history")
-                }
+            Divider()
 
-                MenuButton(title: "Exception Manager", icon: "checkmark.shield") {
-                    openWindow(id: "exceptions")
-                }
-
-                MenuButton(title: "Settings", icon: "gear") {
-                    openSettings()
-                }
-
-                Divider()
-                    .padding(.vertical, 4)
-
-                MenuButton(title: "Restart Agent", icon: "arrow.clockwise") {
-                    NotificationCenter.default.post(name: .restartAgent, object: nil)
-                }
-
-                MenuButton(title: "Quit SecretKeeper", icon: "power") {
-                    NSApplication.shared.terminate(nil)
-                }
-            }
-            .padding(.vertical, 8)
+            // Menu items
+            menuSection
         }
-        .frame(width: 320)
+        .padding(12)
+        .frame(width: 280)
     }
+
+    // MARK: - Sections
+
+    private var headerSection: some View {
+        HStack {
+            Image(systemName: headerIcon)
+                .font(.system(size: 24))
+                .foregroundStyle(headerIconColor)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("SecretKeeper")
+                    .font(.headline)
+                Text(statusText)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+        }
+    }
+
+    private var headerIcon: String {
+        guard appState.isConnected, let status = appState.agentStatus else {
+            return "xmark.shield.fill"
+        }
+        switch status.mode {
+        case "block":
+            return "lock.shield.fill"
+        case "best-effort":
+            return "checkmark.shield.fill"
+        case "monitor":
+            return "eye.fill"
+        case "disabled":
+            return "xmark.shield.fill"
+        default:
+            return "shield.fill"
+        }
+    }
+
+    private var headerIconColor: Color {
+        guard appState.isConnected, let status = appState.agentStatus else {
+            return .red
+        }
+        switch status.mode {
+        case "block":
+            return .accentColor
+        case "best-effort":
+            return .green
+        case "monitor":
+            return .secondary
+        case "disabled":
+            return .red
+        default:
+            return .accentColor
+        }
+    }
+
+    private var statusText: String {
+        if !appState.isConnected {
+            return "Disconnected"
+        } else if let status = appState.agentStatus {
+            return modeDisplayName(status.mode)
+        } else {
+            return "Connecting..."
+        }
+    }
+
+    private func modeDisplayName(_ mode: String) -> String {
+        switch mode {
+        case "block":
+            return "Block Mode"
+        case "best-effort":
+            return "Active"
+        case "monitor":
+            return "Monitor Only"
+        case "disabled":
+            return "Protection Disabled"
+        default:
+            return mode.capitalized
+        }
+    }
+
+    private var disabledWarning: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.red)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Full Disk Access Required")
+                    .font(.caption)
+                    .fontWeight(.medium)
+                Text("SecretKeeper cannot monitor files without FDA")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.red.opacity(0.1))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func statusSection(_ status: AgentStatus) -> some View {
+        VStack(spacing: 8) {
+            StatusInfoRow(icon: "clock", label: "Uptime", value: formatUptime(status.uptimeSecs))
+            StatusInfoRow(icon: "exclamationmark.triangle", label: "Violations", value: "\(status.totalViolations)")
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity)
+        .background(Color(nsColor: .quaternarySystemFill))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    private var disconnectedSection: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "bolt.slash.fill")
+                .foregroundStyle(.red)
+            Text("Agent not connected")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(nsColor: .quaternarySystemFill))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    private var violationsSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Recent Violations")
+                .font(.subheadline)
+                .fontWeight(.medium)
+                .foregroundStyle(.secondary)
+
+            ForEach(appState.pendingViolations.prefix(3)) { violation in
+                ViolationRow(violation: violation)
+            }
+
+            if appState.pendingViolations.count > 3 {
+                Text("+\(appState.pendingViolations.count - 3) more")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+    }
+
+    private var menuSection: some View {
+        VStack(spacing: 2) {
+            MenuItem(title: "Violation History", icon: "clock.arrow.circlepath") {
+                openWindow(id: "history")
+            }
+            MenuItem(title: "Settings...", icon: "gear") {
+                openWindow(id: "settings")
+            }
+
+            Divider()
+                .padding(.vertical, 4)
+
+            MenuItem(title: "Restart Agent", icon: "arrow.clockwise") {
+                NotificationCenter.default.post(name: .restartAgent, object: nil)
+            }
+            MenuItem(title: "Quit", icon: "power") {
+                NSApplication.shared.terminate(nil)
+            }
+        }
+    }
+
+    // MARK: - Helpers
 
     private func formatUptime(_ seconds: Int) -> String {
         let hours = seconds / 3600
@@ -122,106 +217,87 @@ struct MenuBarView: View {
     }
 
     private func openWindow(id: String) {
-        // Close the popover first
         if let popover = (NSApp.delegate as? AppDelegate)?.popover {
             popover.performClose(nil)
         }
 
-        // Try to find and activate existing window
         if let window = NSApp.windows.first(where: { $0.identifier?.rawValue == id }) {
             window.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
-        } else {
-            // Open via environment
-            if let appDelegate = NSApp.delegate as? AppDelegate {
-                appDelegate.openWindow(id: id)
-            }
+        } else if let appDelegate = NSApp.delegate as? AppDelegate {
+            appDelegate.openWindow(id: id)
         }
     }
 
-    private func openSettings() {
-        // Close the popover first
-        if let popover = (NSApp.delegate as? AppDelegate)?.popover {
-            popover.performClose(nil)
-        }
-
-        // Open settings window
-        NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
-        NSApp.activate(ignoringOtherApps: true)
-    }
 }
 
-struct ConnectionIndicator: View {
-    let isConnected: Bool
+// MARK: - Supporting Views
 
-    var body: some View {
-        HStack(spacing: 4) {
-            Circle()
-                .fill(isConnected ? Color.green : Color.red)
-                .frame(width: 8, height: 8)
-            Text(isConnected ? "Connected" : "Disconnected")
-                .font(.caption)
-                .foregroundColor(.secondary)
-        }
-    }
-}
-
-struct StatusRow: View {
+struct StatusInfoRow: View {
+    let icon: String
     let label: String
     let value: String
 
     var body: some View {
         HStack {
-            Text(label)
-                .foregroundColor(.secondary)
+            Label(label, systemImage: icon)
+                .foregroundStyle(.secondary)
             Spacer()
             Text(value)
-                .fontWeight(.medium)
                 .monospacedDigit()
         }
-        .font(.system(.body, design: .monospaced))
+        .font(.subheadline)
     }
 }
 
-struct PendingViolationRow: View {
+struct ViolationRow: View {
     let violation: ViolationEvent
 
     var body: some View {
-        HStack {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundColor(.orange)
-            VStack(alignment: .leading) {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.circle.fill")
+                .foregroundStyle(.orange)
+                .font(.subheadline)
+
+            VStack(alignment: .leading, spacing: 1) {
                 Text(violation.processName)
-                    .font(.system(.body, design: .monospaced))
+                    .font(.subheadline)
                     .lineLimit(1)
                 Text(violation.filePath)
                     .font(.caption)
-                    .foregroundColor(.secondary)
+                    .foregroundStyle(.tertiary)
                     .lineLimit(1)
             }
         }
-        .padding(.vertical, 2)
     }
 }
 
-struct MenuButton: View {
+struct MenuItem: View {
     let title: String
     let icon: String
     let action: () -> Void
 
+    @State private var isHovering = false
+
     var body: some View {
         Button(action: action) {
-            HStack {
+            HStack(spacing: 8) {
                 Image(systemName: icon)
-                    .frame(width: 20)
+                    .frame(width: 16)
+                    .foregroundStyle(.secondary)
                 Text(title)
                 Spacer()
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
+            .font(.body)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(isHovering ? Color(nsColor: .selectedContentBackgroundColor) : .clear)
+            .foregroundStyle(isHovering ? .white : .primary)
+            .clipShape(RoundedRectangle(cornerRadius: 4))
         }
         .buttonStyle(.plain)
-        .background(Color.clear)
-        .contentShape(Rectangle())
+        .onHover { hovering in
+            isHovering = hovering
+        }
     }
 }

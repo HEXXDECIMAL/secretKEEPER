@@ -397,8 +397,11 @@ mod tests {
         let dir = tempdir().unwrap();
         let socket_path = dir.path().join("test.sock");
         let storage = Arc::new(Storage::in_memory().unwrap());
+        let mode = Arc::new(RwLock::new("block".to_string()));
+        let degraded_mode = Arc::new(RwLock::new(false));
 
-        let server = IpcServer::new(&socket_path, storage, String::new()).await;
+        let server =
+            IpcServer::new(&socket_path, storage, mode, degraded_mode, String::new()).await;
         assert!(server.is_ok());
         assert!(socket_path.exists());
     }

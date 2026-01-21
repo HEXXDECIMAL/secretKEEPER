@@ -1,3 +1,4 @@
+import Combine
 import os.log
 import SwiftUI
 import UserNotifications
@@ -40,10 +41,12 @@ struct SecretKeeperApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
     var body: some Scene {
-        Settings {
+        Window("Settings", id: "settings") {
             SettingsView()
                 .environmentObject(appDelegate.appState)
         }
+        .windowResizability(.contentSize)
+        .defaultPosition(.center)
 
         Window("Violation History", id: "history") {
             ViolationHistoryView()
@@ -63,8 +66,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     let appState = AppState()
     var ipcClient: IPCClient?
     let agentManager = AgentManager.shared
+    private var cancellables = Set<AnyCancellable>()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Run as accessory app (menu bar only, no dock icon, no auto-shown windows)
+        NSApp.setActivationPolicy(.accessory)
+
+        // Close any auto-opened windows (SwiftUI opens Settings by default)
+        for window in NSApp.windows {
+            window.close()
+        }
+
         // Print to console for users running from terminal
         print("""
         ┌─────────────────────────────────────────────────────────────────────┐
@@ -93,7 +105,89 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         setupMenuBar()
         setupNotificationObservers()
+        setupStateObservers()
         checkAndStartAgent()
+    }
+
+    private func setupStateObservers() {
+        // Observe connection state changes
+        appState.$isConnected
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.updateMenuBarIcon()
+            }
+            .store(in: &cancellables)
+
+        // Observe agent status changes
+        appState.$agentStatus
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.updateMenuBarIcon()
+            }
+            .store(in: &cancellables)
+
+        // Observe pending violations
+        appState.$pendingViolations
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.updateMenuBarIcon()
+            }
+            .store(in: &cancellables)
+    }
+
+    private func updateMenuBarIcon() {
+        guard let button = statusItem?.button else { return }
+
+        let iconName: String
+        let tint: NSColor?
+
+        if !appState.isConnected {
+            // Disconnected - show warning icon
+            iconName = "exclamationmark.shield.fill"
+            tint = .systemRed
+        } else if let status = appState.agentStatus {
+            // Check for pending violations first (takes priority for visual attention)
+            if !appState.pendingViolations.isEmpty {
+                iconName = "exclamationmark.shield.fill"
+                tint = .systemOrange
+            } else {
+                switch status.mode {
+                case "disabled":
+                    // FDA missing - protection disabled
+                    iconName = "xmark.shield.fill"
+                    tint = .systemRed
+                case "best-effort":
+                    // Active and working
+                    iconName = "checkmark.shield.fill"
+                    tint = nil  // Use default accent color
+                case "block":
+                    // Full blocking mode
+                    iconName = "lock.shield.fill"
+                    tint = nil
+                case "monitor":
+                    // Monitor only
+                    iconName = "eye.fill"
+                    tint = .secondaryLabelColor
+                default:
+                    iconName = "shield.fill"
+                    tint = nil
+                }
+            }
+        } else {
+            // Connected but no status yet
+            iconName = "shield.fill"
+            tint = nil
+        }
+
+        var image = NSImage(systemSymbolName: iconName, accessibilityDescription: "SecretKeeper")
+
+        // Apply tint if specified
+        if let tint = tint, let img = image {
+            let config = NSImage.SymbolConfiguration(paletteColors: [tint])
+            image = img.withSymbolConfiguration(config)
+        }
+
+        button.image = image
     }
 
     private func setupNotificationObservers() {
@@ -391,12 +485,50 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func togglePopover() {
-        if let button = statusItem?.button {
-            if popover.isShown {
-                popover.performClose(nil)
-            } else {
-                popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-            }
+        guard let button = statusItem?.button else { return }
+
+        // If popover is shown, just close it
+        if popover.isShown {
+            popover.performClose(nil)
+            return
+        }
+
+        // Check various bad states
+        let isDisconnected = !appState.isConnected
+        let isDegraded = appState.agentStatus?.degradedMode == true
+        let isDisabledMode = appState.agentStatus?.mode == "disabled"
+        let agentRunning = agentManager.isAgentRunning()
+
+        appLogger.info("Menubar clicked: connected=\(appState.isConnected), degraded=\(isDegraded), disabled=\(isDisabledMode), agentRunning=\(agentRunning)")
+
+        if isDisconnected && !agentRunning {
+            // Agent not running at all - try to start it in background, but still show popover
+            appLogger.info("Agent not running - attempting restart in background")
+            attemptAgentRestart()
+        } else if isDegraded || isDisabledMode {
+            // Agent running but FDA missing - try restart silently in background
+            appLogger.info("Agent in degraded/disabled mode - attempting silent restart")
+            restartAgent()
+        }
+
+        // Always show the popover so user can access menu (including Quit)
+        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+    }
+
+    private func attemptAgentRestart() {
+        appLogger.info("Attempting to restart agent...")
+
+        // Disconnect current IPC client
+        ipcClient?.disconnect()
+        appState.isConnected = false
+        appState.agentStatus = nil
+
+        // Check if agent is installed
+        if agentManager.isAgentInstalled() {
+            startAgent()
+        } else {
+            // Show install dialog
+            showInstallOrStartAlert(installed: false)
         }
     }
 
@@ -408,11 +540,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self.appState.pendingViolations.append(violation)
             self.appState.totalViolations += 1
 
-            // Update status item to indicate pending violation
-            self.statusItem?.button?.image = NSImage(
-                systemSymbolName: "lock.shield.fill",
-                accessibilityDescription: "SecretKeeper - Violation"
-            )
+            // Icon will be updated by the state observer
 
             // Show notification
             self.sendNotification(for: violation)
@@ -491,16 +619,53 @@ extension AppDelegate: IPCClientDelegate {
         1. Click "Open System Settings"
         2. Click + then press Cmd+Shift+G
         3. Paste the path (already copied) and select the agent
-        4. Click "Restart Agent" in the menu bar
+        4. Click "Restart Agent" to apply changes
 
         Path copied: /Library/PrivilegedHelperTools/secretkeeper-agent
         """
 
-        alert.addButton(withTitle: "Open System Settings")
+        alert.addButton(withTitle: "Open Settings")
+        alert.addButton(withTitle: "Check Again")
         alert.addButton(withTitle: "Later")
 
-        if alert.runModal() == .alertFirstButtonReturn {
+        let response = alert.runModal()
+        switch response {
+        case .alertFirstButtonReturn:
+            // Open System Settings
             agentManager.openFullDiskAccessSettings()
+        case .alertSecondButtonReturn:
+            // Check Again - restart agent to see if FDA is now granted
+            appLogger.info("User requested 'Check Again' - restarting agent")
+            restartAgent()
+        default:
+            break
+        }
+    }
+
+    private func restartAgent() {
+        appLogger.info("Restarting agent...")
+
+        // Disconnect current IPC client
+        ipcClient?.disconnect()
+        appState.isConnected = false
+        appState.agentStatus = nil
+
+        // Stop and restart the agent
+        agentManager.restartAgent { [weak self] result in
+            DispatchQueue.main.async {
+                switch result {
+                case .success:
+                    appLogger.info("Agent restarted successfully")
+                    self?.connectToAgent()
+                case .failure(let error):
+                    appLogger.error("Failed to restart agent: \(error.localizedDescription)")
+                    let errorAlert = NSAlert()
+                    errorAlert.alertStyle = .critical
+                    errorAlert.messageText = "Failed to Restart Agent"
+                    errorAlert.informativeText = error.localizedDescription
+                    errorAlert.runModal()
+                }
+            }
         }
     }
 

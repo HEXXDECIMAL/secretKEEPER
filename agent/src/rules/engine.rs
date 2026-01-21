@@ -336,6 +336,8 @@ mod tests {
 
         assert!(engine.is_protected("~/.ssh/id_rsa"));
         assert!(engine.is_protected("~/.ssh/id_ed25519"));
+        assert!(engine.is_protected("~/.ssh/id_ed25519_sk")); // Security key variant
+        assert!(engine.is_protected("~/.ssh/id_ecdsa_sk")); // Another security key variant
         assert!(engine.is_protected("~/.ssh/my_key"));
         assert!(engine.is_protected("~/.aws/credentials"));
         assert!(!engine.is_protected("/etc/passwd"));

@@ -124,7 +124,7 @@ impl HandlerState {
     }
 
     async fn handle_set_mode(&self, mode: String) -> Response {
-        let valid_modes = ["monitor", "block", "best-effort"];
+        let valid_modes = ["monitor", "block", "best-effort", "disabled"];
         if !valid_modes.contains(&mode.as_str()) {
             return Response::error(format!(
                 "Invalid mode '{}'. Must be one of: {:?}",

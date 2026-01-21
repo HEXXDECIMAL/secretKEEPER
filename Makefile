@@ -184,13 +184,18 @@ ui-macos: build-agent
 	@echo "Embedding agent binary..."
 	@cp target/release/secretkeeper-agent ui-swift/SecretKeeper/.build/SecretKeeper.app/Contents/Resources/
 	@echo "Embedding agent config..."
-	@cp agent/config/macos.toml ui-swift/SecretKeeper/.build/SecretKeeper.app/Contents/Resources/default.toml
+	@cp agent/config/default.toml ui-swift/SecretKeeper/.build/SecretKeeper.app/Contents/Resources/
+	@cp agent/config/macos.toml ui-swift/SecretKeeper/.build/SecretKeeper.app/Contents/Resources/
+	@echo "Embedding app icon..."
+	@cp media/icons/AppIcon.icns ui-swift/SecretKeeper/.build/SecretKeeper.app/Contents/Resources/
 	@echo '<?xml version="1.0" encoding="UTF-8"?>\n\
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n\
 <plist version="1.0">\n\
 <dict>\n\
 	<key>CFBundleExecutable</key>\n\
 	<string>SecretKeeper</string>\n\
+	<key>CFBundleIconFile</key>\n\
+	<string>AppIcon</string>\n\
 	<key>CFBundleIdentifier</key>\n\
 	<string>com.codegroove.secretkeeper.ui</string>\n\
 	<key>CFBundleName</key>\n\
@@ -220,13 +225,18 @@ ui-macos-debug: build-agent
 	@echo "Embedding agent binary..."
 	@cp target/release/secretkeeper-agent ui-swift/SecretKeeper/.build/SecretKeeper.app/Contents/Resources/
 	@echo "Embedding agent config..."
-	@cp agent/config/macos.toml ui-swift/SecretKeeper/.build/SecretKeeper.app/Contents/Resources/default.toml
+	@cp agent/config/default.toml ui-swift/SecretKeeper/.build/SecretKeeper.app/Contents/Resources/
+	@cp agent/config/macos.toml ui-swift/SecretKeeper/.build/SecretKeeper.app/Contents/Resources/
+	@echo "Embedding app icon..."
+	@cp media/icons/AppIcon.icns ui-swift/SecretKeeper/.build/SecretKeeper.app/Contents/Resources/
 	@echo '<?xml version="1.0" encoding="UTF-8"?>\n\
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n\
 <plist version="1.0">\n\
 <dict>\n\
 	<key>CFBundleExecutable</key>\n\
 	<string>SecretKeeper</string>\n\
+	<key>CFBundleIconFile</key>\n\
+	<string>AppIcon</string>\n\
 	<key>CFBundleIdentifier</key>\n\
 	<string>com.codegroove.secretkeeper.ui</string>\n\
 	<key>CFBundleName</key>\n\

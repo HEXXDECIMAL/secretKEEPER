@@ -186,6 +186,35 @@ class AgentManager {
         }
     }
 
+    /// Wait for the agent to start with retries.
+    private func waitForAgentWithRetries(maxAttempts: Int, delaySeconds: Double, completion: @escaping (Bool) -> Void) {
+        logger.info("Waiting for agent to start (max \(maxAttempts) attempts)...")
+
+        func attempt(_ remaining: Int) {
+            if isAgentRunning() {
+                logger.info("Agent started successfully after \(maxAttempts - remaining + 1) attempt(s)")
+                completion(true)
+                return
+            }
+
+            if remaining <= 1 {
+                logger.error("Agent did not start after \(maxAttempts) attempts")
+                completion(false)
+                return
+            }
+
+            logger.info("Agent not ready, retrying in \(delaySeconds)s... (\(remaining - 1) attempts left)")
+            DispatchQueue.main.asyncAfter(deadline: .now() + delaySeconds) {
+                attempt(remaining - 1)
+            }
+        }
+
+        // Start first attempt after initial delay
+        DispatchQueue.main.asyncAfter(deadline: .now() + delaySeconds) {
+            attempt(maxAttempts)
+        }
+    }
+
     /// Check if the agent is installed (binary and plist exist).
     func isAgentInstalled() -> Bool {
         logger.info("Checking if agent is installed...")
@@ -303,10 +332,9 @@ class AgentManager {
             switch result {
             case .success:
                 self.logger.info("Installation script completed successfully")
-                // Give launchd a moment to start the agent
-                self.logger.info("Waiting for agent to start...")
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                    if self.isAgentRunning() {
+                // Wait for agent to start with retries
+                self.waitForAgentWithRetries(maxAttempts: 10, delaySeconds: 1.0) { running in
+                    if running {
                         self.logger.info("=== Agent installation complete and running ===")
                         completion(.success(()))
                     } else {
@@ -406,9 +434,9 @@ class AgentManager {
             switch result {
             case .success:
                 self.logger.info("launchctl completed")
-                self.logger.info("Waiting for agent to start...")
-                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-                    if self.isAgentRunning() {
+                // Wait for agent to start with retries
+                self.waitForAgentWithRetries(maxAttempts: 10, delaySeconds: 1.0) { running in
+                    if running {
                         self.logger.info("=== Agent started successfully ===")
                         completion(.success(()))
                     } else {
@@ -439,6 +467,31 @@ class AgentManager {
                 self?.logger.error("launchctl unload failed: \(error.localizedDescription)")
             }
             completion(result.map { _ in () })
+        }
+    }
+
+    func restartAgent(completion: @escaping (Result<Void, AgentManagerError>) -> Void) {
+        logger.info("=== Restarting agent ===")
+
+        // Stop the agent first, then start it
+        stopAgent { [weak self] stopResult in
+            guard let self = self else {
+                completion(.failure(.installFailed("Agent manager was deallocated")))
+                return
+            }
+
+            switch stopResult {
+            case .success:
+                self.logger.info("Agent stopped, now starting...")
+                // Small delay to ensure clean shutdown
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    self.startAgent(completion: completion)
+                }
+            case .failure(let error):
+                self.logger.warning("Stop failed (\(error.localizedDescription)), attempting start anyway...")
+                // Try to start anyway - maybe it wasn't running
+                self.startAgent(completion: completion)
+            }
         }
     }
 

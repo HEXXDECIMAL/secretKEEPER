@@ -70,23 +70,23 @@ impl super::Monitor for EsloggerMonitor {
                 while let Ok(Some(line)) = lines.next_line().await {
                     tracing::error!("eslogger stderr: {}", line);
 
-                    // Detect Full Disk Access error
+                    // Detect Full Disk Access error - monitoring is BROKEN without FDA
                     if line.contains("ES_NEW_CLIENT_RESULT_ERR_NOT_PERMITTED")
-                        || line.contains("Not permitted to create an ES Client") {
-                        tracing::error!("Full Disk Access not granted - FILE MONITORING DISABLED");
-                        tracing::error!("SecretKeeper CANNOT protect your files without FDA");
-                        tracing::error!("Grant FDA to: /Library/PrivilegedHelperTools/secretkeeper-agent");
+                        || line.contains("Not permitted to create an ES Client")
+                    {
+                        tracing::error!("===========================================");
+                        tracing::error!("CRITICAL: Full Disk Access NOT GRANTED");
+                        tracing::error!("SecretKeeper CANNOT monitor files without FDA!");
+                        tracing::error!("Grant FDA to Terminal or the agent binary.");
+                        tracing::error!("===========================================");
 
-                        // Switch to best-effort mode
-                        let mut mode = mode_clone.write().await;
-                        if mode.as_str() == "block" {
-                            *mode = "best-effort".to_string();
-                            tracing::info!("Enforcement mode changed: block -> best-effort");
-                        }
-
-                        // Mark as degraded in the context
+                        // Mark as degraded - this means monitoring is broken, not "best-effort"
                         let mut degraded = context_degraded_clone.write().await;
                         *degraded = true;
+
+                        // Set mode to indicate no protection
+                        let mut mode = mode_clone.write().await;
+                        *mode = "disabled".to_string();
                     }
                 }
             });
@@ -97,21 +97,61 @@ impl super::Monitor for EsloggerMonitor {
         // Process events
         let reader = BufReader::new(stdout);
         let mut lines = reader.lines();
-        let mut event_count: u64 = 0;
+
+        tracing::info!("eslogger stdout reader ready, waiting for events...");
+
+        // eslogger can only OBSERVE events (ES_EVENT_TYPE_NOTIFY), not block them.
+        // True blocking requires ES_AUTH_OPEN events via direct EndpointSecurity.
+        // So when using eslogger, we're always in "best-effort" mode.
+        {
+            let mut mode = self.context.mode.write().await;
+            if mode.as_str() == "block" {
+                *mode = "best-effort".to_string();
+                tracing::info!("Mode: best-effort (eslogger can observe and suspend, not pre-emptively block)");
+            }
+        }
 
         tracing::info!("Listening for file access events...");
+
+        // Spawn periodic status logging task
+        let stats_context = self.context.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(60));
+            loop {
+                interval.tick().await;
+                let snapshot = stats_context.stats.take();
+                if snapshot.events_received > 0
+                    || snapshot.protected_checks > 0
+                    || snapshot.violations > 0
+                {
+                    tracing::info!(
+                        "Status [eslogger]: {} events, {} protected file checks, {} allowed, {} violations, {} rate-limited",
+                        snapshot.events_received,
+                        snapshot.protected_checks,
+                        snapshot.allowed,
+                        snapshot.violations,
+                        snapshot.rate_limited
+                    );
+                } else {
+                    tracing::info!("Status [eslogger]: idle (no file access events in last minute)");
+                }
+            }
+        });
 
         // Track if we've seen the FDA error
         let degraded_flag = self.context.degraded_mode.clone();
 
+        let mut event_count: u64 = 0;
         while let Ok(Some(line)) = lines.next_line().await {
-            if line.trim().is_empty() {
-                continue;
+            event_count += 1;
+
+            // Log first few events and then every 1000th for debugging
+            if event_count <= 5 || event_count % 1000 == 0 {
+                tracing::debug!("eslogger event #{}: {} bytes", event_count, line.len());
             }
 
-            event_count += 1;
-            if event_count.is_multiple_of(1000) {
-                tracing::debug!("Processed {} eslogger events", event_count);
+            if line.trim().is_empty() {
+                continue;
             }
 
             // Parse the event
@@ -119,6 +159,17 @@ impl super::Monitor for EsloggerMonitor {
                 Ok(json) => {
                     if let Some(event) = self.parse_open_event(&json) {
                         let (file_path, context) = event;
+
+                        // Info-level log for SSH key access (critical for debugging)
+                        if file_path.contains(".ssh") {
+                            tracing::info!(
+                                "SSH file access detected: path={} by process={} (euid={:?}, pid={:?})",
+                                file_path,
+                                context.path.display(),
+                                context.euid,
+                                context.pid
+                            );
+                        }
 
                         // Check if this is a protected file and handle it
                         if let Some(violation) = self
@@ -140,12 +191,10 @@ impl super::Monitor for EsloggerMonitor {
                                 if let Some(pid) = context.pid {
                                     if let Err(e) = self.context.suspend_process(pid) {
                                         tracing::warn!("Failed to suspend process {}: {}", pid, e);
+                                    } else if mode.as_str() == "best-effort" {
+                                        tracing::info!("Best-effort: stopped process {} (file may have been accessed)", pid);
                                     } else {
-                                        if mode.as_str() == "best-effort" {
-                                            tracing::info!("Best-effort: stopped process {} (file may have been accessed)", pid);
-                                        } else {
-                                            tracing::info!("Suspended process {} pending user decision", pid);
-                                        }
+                                        tracing::info!("Suspended process {} pending user decision", pid);
                                     }
                                 }
                             }
@@ -153,11 +202,7 @@ impl super::Monitor for EsloggerMonitor {
                     }
                 }
                 Err(e) => {
-                    if event_count <= 10 {
-                        tracing::warn!("Failed to parse eslogger event: {}", e);
-                    } else {
-                        tracing::trace!("Failed to parse eslogger event: {}", e);
-                    }
+                    tracing::trace!("Failed to parse eslogger event: {}", e);
                 }
             }
         }
@@ -282,7 +327,15 @@ impl EsloggerMonitor {
                     let rest = file_path.strip_prefix(home_str.as_ref());
                     if let Some(suffix) = rest {
                         if suffix.is_empty() || suffix.starts_with('/') {
-                            format!("~{}", suffix)
+                            let expanded = format!("~{}", suffix);
+                            tracing::debug!(
+                                "Path expansion: {} -> {} (euid={}, home={})",
+                                file_path,
+                                expanded,
+                                euid,
+                                home_str
+                            );
+                            expanded
                         } else {
                             file_path.to_string()
                         }
@@ -290,9 +343,15 @@ impl EsloggerMonitor {
                         file_path.to_string()
                     }
                 } else {
+                    tracing::debug!(
+                        "No home directory for euid={} - using raw path: {}",
+                        euid,
+                        file_path
+                    );
                     file_path.to_string()
                 }
             } else {
+                tracing::debug!("No euid available - using raw path: {}", file_path);
                 file_path.to_string()
             }
         } else {

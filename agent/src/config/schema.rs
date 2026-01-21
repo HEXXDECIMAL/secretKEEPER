@@ -122,6 +122,41 @@ impl Config {
         }
         false
     }
+
+    /// Merge another config into this one.
+    /// The other config's values override this one's for scalar fields,
+    /// while arrays are appended.
+    pub fn merge(&mut self, other: Config) {
+        // Override scalar agent settings if they differ from defaults
+        if other.agent.log_level != default_log_level() {
+            self.agent.log_level = other.agent.log_level;
+        }
+
+        // Override enforcement mode if set
+        if other.enforcement.mode != "block" {
+            self.enforcement.mode = other.enforcement.mode;
+        }
+
+        // Append arrays (avoiding duplicates by ID for protected_files)
+        for pf in other.protected_files {
+            if !self.protected_files.iter().any(|p| p.id == pf.id) {
+                self.protected_files.push(pf);
+            }
+        }
+
+        // Append global exclusions
+        self.global_exclusions.extend(other.global_exclusions);
+
+        // Append exceptions
+        self.exceptions.extend(other.exceptions);
+
+        // Append excluded patterns (deduplicate)
+        for pattern in other.excluded_patterns {
+            if !self.excluded_patterns.contains(&pattern) {
+                self.excluded_patterns.push(pattern);
+            }
+        }
+    }
 }
 
 /// Agent-level configuration.

@@ -51,8 +51,11 @@ async fn main() -> Result<()> {
         }
     }
 
-    // Initialize logging for daemon mode
-    init_logging(&args);
+    // Load configuration early so we can use its log_level
+    let config = load_config(&args)?;
+
+    // Initialize logging for daemon mode using config's log_level
+    init_logging(&args, &config.agent.log_level);
 
     // Check root privileges
     if !args.skip_root_check && !is_root() {
@@ -61,16 +64,19 @@ async fn main() -> Result<()> {
         return Err(Error::NotRoot);
     }
 
-    run_agent(&args).await
+    run_agent(&args, config).await
 }
 
-async fn run_agent(args: &Args) -> Result<()> {
-    // Load configuration
-    let config = load_config(args)?;
-
+async fn run_agent(args: &Args, config: Config) -> Result<()> {
     tracing::info!("SecretKeeper v{} starting", VERSION);
     tracing::info!("Enforcement mode: {}", args.mode);
     tracing::info!("Protected file rules: {}", config.protected_files.len());
+    for pf in &config.protected_files {
+        tracing::info!("  [{}]: {}", pf.id, pf.patterns.join(", "));
+    }
+    if !config.excluded_patterns.is_empty() {
+        tracing::info!("Excluded patterns: {}", config.excluded_patterns.join(", "));
+    }
 
     // Open storage
     let storage = Arc::new(Storage::open(&config.agent.database_path)?);
@@ -322,9 +328,10 @@ fn print_check(name: &str, ok: bool, note: Option<&str>) {
 /// Check if Full Disk Access is granted by testing eslogger.
 /// This is the only reliable way to check FDA on macOS.
 #[cfg(target_os = "macos")]
+#[allow(clippy::lines_filter_map_ok)]
 fn check_full_disk_access() -> bool {
-    use std::process::{Command, Stdio};
     use std::io::{BufRead, BufReader};
+    use std::process::{Command, Stdio};
     use std::time::Duration;
 
     // Run eslogger briefly and check for FDA error
@@ -347,7 +354,7 @@ fn check_full_disk_access() -> bool {
             // Process exited - check stderr for FDA error
             if let Some(stderr) = child.stderr.take() {
                 let reader = BufReader::new(stderr);
-                for line in reader.lines().flatten() {
+                for line in reader.lines().filter_map(|l| l.ok()) {
                     if line.contains("ES_NEW_CLIENT_RESULT_ERR_NOT_PERMITTED")
                         || line.contains("Not permitted to create an ES Client")
                     {
@@ -570,13 +577,22 @@ async fn show_status(args: &Args) -> Result<()> {
     Ok(())
 }
 
-fn init_logging(args: &Args) {
+fn init_logging(args: &Args, config_log_level: &str) {
+    // CLI flags take precedence, then config, then default to warn
     let filter = if args.debug {
         "debug,rusqlite=warn"
     } else if args.verbose {
         "info,rusqlite=warn"
     } else {
-        "warn"
+        // Use config's log_level
+        match config_log_level {
+            "trace" => "trace,rusqlite=warn",
+            "debug" => "debug,rusqlite=warn",
+            "info" => "info,rusqlite=warn",
+            "warn" => "warn",
+            "error" => "error",
+            _ => "info,rusqlite=warn", // Default to info if unrecognized
+        }
     };
 
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(filter));
