@@ -72,7 +72,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var reconnectAttempt = 0
     private let maxReconnectAttempts = 3
     private let baseReconnectDelay: TimeInterval = 5.0
-
     override init() {
         super.init()
         AppDelegate.shared = self
@@ -148,56 +147,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func updateMenuBarIcon() {
         guard let button = statusItem?.button else { return }
 
-        let iconName: String
-        let tint: NSColor?
-
-        if !appState.isConnected {
-            // Disconnected - show warning icon
-            iconName = "exclamationmark.shield.fill"
-            tint = .systemRed
-        } else if let status = appState.agentStatus {
-            // Check for pending violations first (takes priority for visual attention)
-            if !appState.pendingViolations.isEmpty {
-                iconName = "exclamationmark.shield.fill"
-                tint = .systemOrange
-            } else {
-                switch status.mode {
-                case "disabled":
-                    // FDA missing - protection disabled
-                    iconName = "xmark.shield.fill"
-                    tint = .systemRed
-                case "best-effort":
-                    // Active and working
-                    iconName = "checkmark.shield.fill"
-                    tint = nil  // Use default accent color
-                case "block":
-                    // Full blocking mode
-                    iconName = "lock.shield.fill"
-                    tint = nil
-                case "monitor":
-                    // Monitor only
-                    iconName = "eye.fill"
-                    tint = .secondaryLabelColor
-                default:
-                    iconName = "shield.fill"
-                    tint = nil
-                }
-            }
-        } else {
-            // Connected but no status yet
-            iconName = "shield.fill"
-            tint = nil
-        }
-
-        var image = NSImage(systemSymbolName: iconName, accessibilityDescription: "SecretKeeper")
-
-        // Apply tint if specified
-        if let tint = tint, let img = image {
-            let config = NSImage.SymbolConfiguration(paletteColors: [tint])
-            image = img.withSymbolConfiguration(config)
-        }
-
-        button.image = image
+        // Use SF Symbol shield icon
+        button.image = NSImage(systemSymbolName: "lock.shield.fill", accessibilityDescription: "SecretKeeper")
     }
 
     private func setupNotificationObservers() {
@@ -207,20 +158,28 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             name: .restartAgent,
             object: nil
         )
+
     }
 
     @objc private func handleRestartAgent() {
         appLogger.info("User requested agent restart from menu")
         popover.performClose(nil)
 
-        // Disconnect current IPC client
-        ipcClient?.disconnect()
-        appState.isConnected = false
-        appState.agentStatus = nil
-        reconnectAttempt = 0  // Reset retry counter for manual restart
+        // Defer state changes to let popover fully close.
+        // Modifying @Published properties while the popover's SwiftUI views
+        // are still in the hierarchy can cause use-after-free crashes.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+            guard let self = self else { return }
 
-        // Restart the agent
-        startAgent()
+            // Disconnect current IPC client
+            self.ipcClient?.disconnect()
+            self.appState.isConnected = false
+            self.appState.agentStatus = nil
+            self.reconnectAttempt = 0  // Reset retry counter for manual restart
+
+            // Restart the agent
+            self.startAgent()
+        }
     }
 
     func openWindow(id: String) {
@@ -523,7 +482,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
 
         if let button = statusItem?.button {
-            button.image = NSImage(systemSymbolName: "lock.shield", accessibilityDescription: "SecretKeeper")
+            // Use SF Symbol shield icon
+            button.image = NSImage(systemSymbolName: "lock.shield.fill", accessibilityDescription: "SecretKeeper")
             button.action = #selector(togglePopover)
             button.target = self
         }
@@ -559,10 +519,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        // Log state for debugging but don't auto-restart (avoids password prompt loops)
+        // Log state for debugging
         appLogger.info("Menubar clicked: connected=\(appState.isConnected), agentRunning=\(agentManager.isAgentRunning())")
 
-        // Just show the popover - user can manually restart via menu if needed
+        // If not connected, try to reconnect (just socket connection, no password prompt)
+        if !appState.isConnected {
+            appLogger.info("Not connected - attempting to reconnect...")
+            reconnectAttempt = 0  // Reset counter for manual click
+            connectToAgent()
+        }
+
+        // Show the popover
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
     }
 
@@ -584,7 +551,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
             // Open violation alert window
             let alertWindow = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 600, height: 500),
+                contentRect: NSRect(x: 0, y: 0, width: 680, height: 680),
                 styleMask: [.titled, .closable],
                 backing: .buffered,
                 defer: false
@@ -621,7 +588,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
             // Open violation alert window
             let alertWindow = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 600, height: 500),
+                contentRect: NSRect(x: 0, y: 0, width: 680, height: 680),
                 styleMask: [.titled, .closable],
                 backing: .buffered,
                 defer: false

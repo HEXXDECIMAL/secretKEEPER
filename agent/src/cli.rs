@@ -90,6 +90,9 @@ pub enum Command {
     /// Check system prerequisites
     Check,
 
+    /// Check if Full Disk Access is granted (exits 0 if yes, 1 if no)
+    CheckFda,
+
     /// Show version and build info
     Version,
 }

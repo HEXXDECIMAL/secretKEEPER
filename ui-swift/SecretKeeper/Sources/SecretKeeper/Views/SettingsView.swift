@@ -94,9 +94,6 @@ struct GeneralSettingsView: View {
                     LabeledContent("Mode") {
                         Text(status.mode.replacingOccurrences(of: "-", with: " ").capitalized)
                     }
-                    LabeledContent("Violations Blocked") {
-                        Text("\(status.totalViolations)")
-                    }
                 }
             }
         }
@@ -313,8 +310,28 @@ struct QuickAddExceptionSheet: View {
                 Spacer()
 
                 Button("Add") {
-                    addException()
+                    // Capture all values before dismiss
+                    let path = processPath
+                    let pattern = filePattern
+                    let isGlob = filePattern.contains("*")
+                    let expiresAt: Date? = isPermanent ? nil : Date().addingTimeInterval(24 * 3600)
+
+                    // Dismiss first, then do work
                     dismiss()
+
+                    DispatchQueue.main.async {
+                        AppDelegate.shared?.ipcClient?.addException(
+                            processPath: path,
+                            codeSigner: nil,
+                            filePattern: pattern,
+                            isGlob: isGlob,
+                            expiresAt: expiresAt,
+                            comment: nil
+                        )
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                            AppDelegate.shared?.ipcClient?.getExceptions()
+                        }
+                    }
                 }
                 .keyboardShortcut(.defaultAction)
                 .buttonStyle(.borderedProminent)
@@ -325,18 +342,4 @@ struct QuickAddExceptionSheet: View {
         .frame(width: 400)
     }
 
-    private func addException() {
-        AppDelegate.shared?.ipcClient?.addException(
-            processPath: processPath,
-            codeSigner: nil,
-            filePattern: filePattern,
-            isGlob: filePattern.contains("*"),
-            expiresAt: isPermanent ? nil : Date().addingTimeInterval(24 * 3600),
-            comment: nil
-        )
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-            AppDelegate.shared?.ipcClient?.getExceptions()
-        }
-    }
 }

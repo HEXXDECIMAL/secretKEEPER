@@ -61,14 +61,13 @@ struct ProcessTreeRow: View {
                         .fill(stateColor(state))
                         .frame(width: 6, height: 6)
 
-                    // Process name (allow wrapping)
+                    // Process name
                     Text(entry.name)
                         .font(.system(.callout, design: .monospaced))
                         .fontWeight(depth == 0 ? .semibold : .regular)
-                        .fixedSize(horizontal: false, vertical: true)
 
-                    // PID (no comma formatting)
-                    Text(String(entry.pid))
+                    // PID
+                    Text("(\(entry.pid))")
                         .font(.system(.caption, design: .monospaced))
                         .foregroundStyle(.secondary)
 
@@ -87,12 +86,18 @@ struct ProcessTreeRow: View {
                     Spacer()
                 }
 
-                // Signer info line
-                Text(signerDescription)
+                // Full executable path
+                Text(entry.path)
                     .font(.system(.caption, design: .monospaced))
                     .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.leading, 12)  // Align with process name
+                    .textSelection(.enabled)
+                    .padding(.leading, 12)
+
+                // Signer info line
+                Text(signerDescription)
+                    .font(.system(.caption2, design: .monospaced))
+                    .foregroundStyle(.tertiary)
+                    .padding(.leading, 12)
             }
             .padding(.vertical, 5)
             .padding(.horizontal, 8)

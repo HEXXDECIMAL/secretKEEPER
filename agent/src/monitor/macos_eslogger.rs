@@ -29,6 +29,53 @@ impl EsloggerMonitor {
             .map(|o| o.status.success())
             .unwrap_or(false)
     }
+
+    /// Check if FDA is granted by briefly running eslogger.
+    /// This is the only reliable way for a root process to check FDA,
+    /// since root can read files regardless of TCC permissions.
+    fn check_fda_granted() -> bool {
+        use std::io::{BufRead, BufReader};
+        use std::time::Duration;
+
+        // Spawn eslogger briefly
+        let mut child = match std::process::Command::new("eslogger")
+            .args(["open", "--format", "json"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+        {
+            Ok(c) => c,
+            Err(_) => return false,
+        };
+
+        // Give it a moment to start and potentially fail
+        std::thread::sleep(Duration::from_millis(300));
+
+        match child.try_wait() {
+            Ok(Some(_)) => {
+                // Process exited quickly - check stderr for FDA error
+                if let Some(stderr) = child.stderr.take() {
+                    let reader = BufReader::new(stderr);
+                    for line in reader.lines().map_while(|r| r.ok()) {
+                        if line.contains("ES_NEW_CLIENT_RESULT_ERR_NOT_PERMITTED")
+                            || line.contains("Not permitted to create an ES Client")
+                        {
+                            return false;
+                        }
+                    }
+                }
+                // Exited for other reason - assume no FDA
+                false
+            }
+            Ok(None) => {
+                // Still running after 300ms - FDA is granted!
+                let _ = child.kill();
+                let _ = child.wait(); // Reap the zombie
+                true
+            }
+            Err(_) => false,
+        }
+    }
 }
 
 #[async_trait::async_trait]
@@ -230,13 +277,49 @@ impl super::Monitor for EsloggerMonitor {
             tracing::error!("To enable protection:");
             tracing::error!("  1. Open System Settings > Privacy & Security > Full Disk Access");
             tracing::error!("  2. Add: /Library/PrivilegedHelperTools/secretkeeper-agent");
-            tracing::error!("  3. Restart the agent");
+            tracing::error!("  3. The agent will automatically restart when FDA is granted");
 
-            // Keep the agent running for IPC communication
-            // This allows the UI to connect and show status even when monitoring is disabled
+            // Keep the agent running for IPC communication, but periodically check for FDA
+            // If FDA is granted, self-terminate to let launchd restart with full monitoring
+            tracing::info!(
+                "Will check for FDA grant every few seconds and auto-restart when granted"
+            );
+
+            // Initial delay before first check (10s) to avoid restart loop
+            tracing::info!("Waiting 10s before first FDA check...");
+            tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
+
+            // Incremental backoff: 500ms -> 1s -> 2s -> 4s -> 8s -> 10s (max)
+            let mut check_interval_ms: u64 = 500;
+            const MAX_INTERVAL_MS: u64 = 10_000;
+            let mut check_count: u32 = 0;
+
             loop {
-                tokio::time::sleep(tokio::time::Duration::from_secs(60)).await;
-                tracing::debug!("Agent idle (no file monitoring - FDA not granted)");
+                check_count += 1;
+                tracing::info!("FDA check #{}: testing eslogger...", check_count);
+
+                // Check FDA by briefly running eslogger
+                let fda_granted = Self::check_fda_granted();
+
+                if fda_granted {
+                    tracing::info!("=================================================");
+                    tracing::info!("FDA GRANTED - Restarting agent for full monitoring");
+                    tracing::info!("=================================================");
+                    // Exit with non-zero so launchd's KeepAlive (SuccessfulExit=false) restarts us
+                    std::process::exit(1);
+                }
+
+                tracing::info!(
+                    "FDA check #{}: not granted, next check in {}ms",
+                    check_count,
+                    check_interval_ms
+                );
+
+                // Sleep with current backoff interval
+                tokio::time::sleep(tokio::time::Duration::from_millis(check_interval_ms)).await;
+
+                // Increase interval with exponential backoff, capped at max
+                check_interval_ms = (check_interval_ms * 2).min(MAX_INTERVAL_MS);
             }
         }
 

@@ -68,13 +68,17 @@ fn is_user_in_admin_group(uid: u32) -> bool {
     // Get password entry for user
     let passwd = unsafe { libc::getpwuid(uid) };
     if passwd.is_null() {
+        tracing::debug!("is_user_in_admin_group: getpwuid({}) returned null", uid);
         return false;
     }
 
     let username = unsafe { CStr::from_ptr((*passwd).pw_name) };
     let username = match username.to_str() {
         Ok(s) => s,
-        Err(_) => return false,
+        Err(_) => {
+            tracing::debug!("is_user_in_admin_group: invalid username for uid={}", uid);
+            return false;
+        }
     };
 
     // Check if user is in admin group (gid 80)
@@ -105,7 +109,17 @@ fn is_user_in_admin_group(uid: u32) -> bool {
         }
     }
 
-    groups.iter().take(ngroups as usize).any(|&g| g == ADMIN_GID)
+    let user_groups: Vec<i32> = groups.iter().take(ngroups as usize).copied().collect();
+    let in_admin = user_groups.contains(&ADMIN_GID);
+    tracing::info!(
+        "Auth check: uid={} username={} groups={:?} in_admin={}",
+        uid,
+        username,
+        user_groups,
+        in_admin
+    );
+
+    in_admin
 }
 
 /// Get peer credentials from a Unix socket.
@@ -232,11 +246,9 @@ impl IpcServer {
             }
         })?;
 
-        // Socket permissions allow local users to connect for status/violation viewing.
-        // Security is enforced at the protocol level:
-        // - Privileged operations (kill, allow, set_mode) require root or admin group
-        // - Non-privileged operations (status, get_violations) are read-only
-        // The socket is in /var/run which is protected from world-write.
+        // Socket is world read/write (0o666) so any user can connect for status/events.
+        // Privileged operations (kill, allow, set_mode, exceptions) require root or admin group,
+        // enforced at the protocol level with a clear error response.
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -370,15 +382,15 @@ async fn handle_client(
                                             // Authorized - proceed
                                         }
                                         Some(creds) => {
-                                            tracing::warn!(
-                                                "Unauthorized request from uid={}: {:?}",
+                                            tracing::error!(
+                                                "PERMISSION DENIED: uid={} attempted privileged operation: {:?}",
                                                 creds.uid,
                                                 request
                                             );
                                             send_response(
                                                 &writer,
                                                 &Response::error_with_code(
-                                                    "Permission denied: privileged operation requires root",
+                                                    "Permission denied: requires admin group membership. Run 'id' to check your groups.",
                                                     "E_PERM",
                                                 ),
                                             ).await?;

@@ -34,6 +34,14 @@ async fn main() -> Result<()> {
         Some(Command::Check) => {
             return check_prerequisites();
         }
+        Some(Command::CheckFda) => {
+            // Silent FDA check - exit 0 if granted, 1 if not
+            if check_full_disk_access() {
+                std::process::exit(0);
+            } else {
+                std::process::exit(1);
+            }
+        }
         Some(Command::Validate { verbose }) => {
             return validate_config(&args, *verbose);
         }

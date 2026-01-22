@@ -245,6 +245,9 @@ ui-macos: build-agent
 	@cp agent/config/macos.toml ui-swift/SecretKeeper/.build/SecretKeeper.app/Contents/Resources/
 	@echo "Embedding app icon..."
 	@cp media/icons/AppIcon.icns ui-swift/SecretKeeper/.build/SecretKeeper.app/Contents/Resources/
+	@echo "Embedding menubar icon..."
+	@cp media/icons/MenuBarIconTemplate.png ui-swift/SecretKeeper/.build/SecretKeeper.app/Contents/Resources/
+	@cp media/icons/MenuBarIconTemplate@2x.png ui-swift/SecretKeeper/.build/SecretKeeper.app/Contents/Resources/
 	@echo '<?xml version="1.0" encoding="UTF-8"?>\n\
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n\
 <plist version="1.0">\n\
@@ -286,6 +289,9 @@ ui-macos-debug: build-agent
 	@cp agent/config/macos.toml ui-swift/SecretKeeper/.build/SecretKeeper.app/Contents/Resources/
 	@echo "Embedding app icon..."
 	@cp media/icons/AppIcon.icns ui-swift/SecretKeeper/.build/SecretKeeper.app/Contents/Resources/
+	@echo "Embedding menubar icon..."
+	@cp media/icons/MenuBarIconTemplate.png ui-swift/SecretKeeper/.build/SecretKeeper.app/Contents/Resources/
+	@cp media/icons/MenuBarIconTemplate@2x.png ui-swift/SecretKeeper/.build/SecretKeeper.app/Contents/Resources/
 	@echo '<?xml version="1.0" encoding="UTF-8"?>\n\
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n\
 <plist version="1.0">\n\

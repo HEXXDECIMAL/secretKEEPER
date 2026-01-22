@@ -353,28 +353,60 @@ impl MonitorContext {
     /// Stopping both prevents the parent from spawning more malicious children.
     #[cfg(unix)]
     pub fn suspend_process(&self, pid: u32, ppid: Option<u32>) -> Result<()> {
+        use nix::errno::Errno;
         use nix::sys::signal::{kill, Signal};
         use nix::unistd::Pid;
 
-        // Stop the child process first
+        let mut child_suspended = false;
+
+        // Try to stop the child process
         let child_pid = Pid::from_raw(pid as i32);
-        kill(child_pid, Signal::SIGSTOP).map_err(|e| {
-            Error::monitor(format!("Failed to suspend child process {}: {}", pid, e))
-        })?;
+        match kill(child_pid, Signal::SIGSTOP) {
+            Ok(()) => {
+                child_suspended = true;
+            }
+            Err(Errno::ESRCH) => {
+                // Process already exited - that's OK, continue to try parent
+                tracing::info!(
+                    "Child process {} already exited, will try to suspend parent",
+                    pid
+                );
+            }
+            Err(e) => {
+                return Err(Error::monitor(format!(
+                    "Failed to suspend child process {}: {}",
+                    pid, e
+                )));
+            }
+        }
 
         // Also stop the parent if provided and it's not init/launchd
         if let Some(parent) = ppid {
             if parent > 1 {
                 let parent_pid = Pid::from_raw(parent as i32);
-                if let Err(e) = kill(parent_pid, Signal::SIGSTOP) {
-                    // Log but don't fail - parent may have exited
-                    tracing::warn!("Failed to suspend parent process {}: {}", parent, e);
-                } else {
-                    tracing::info!(
-                        "Suspended parent process {} along with child {}",
-                        parent,
-                        pid
-                    );
+                match kill(parent_pid, Signal::SIGSTOP) {
+                    Ok(()) => {
+                        if child_suspended {
+                            tracing::info!(
+                                "Suspended parent process {} along with child {}",
+                                parent,
+                                pid
+                            );
+                        } else {
+                            tracing::info!(
+                                "Suspended parent process {} (child {} already exited)",
+                                parent,
+                                pid
+                            );
+                        }
+                    }
+                    Err(Errno::ESRCH) => {
+                        tracing::info!("Parent process {} already exited", parent);
+                    }
+                    Err(e) => {
+                        // Log but don't fail - parent may have exited for other reasons
+                        tracing::warn!("Failed to suspend parent process {}: {}", parent, e);
+                    }
                 }
             }
         }

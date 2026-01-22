@@ -121,22 +121,43 @@ struct MenuBarView: View {
     }
 
     private var disabledWarning: some View {
-        HStack(alignment: .top, spacing: 8) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(.red)
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Full Disk Access Required")
-                    .font(.caption)
-                    .fontWeight(.medium)
-                Text("SecretKeeper cannot monitor files without FDA")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.red)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Full Disk Access Required")
+                        .font(.caption)
+                        .fontWeight(.medium)
+                    Text("Grant FDA to enable file protection")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
             }
+            Button("Open Privacy Settings...") {
+                openPrivacySettings()
+            }
+            .font(.caption)
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.red.opacity(0.1))
         .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func openPrivacySettings() {
+        // Close popover first
+        AppDelegate.shared?.popover.performClose(nil)
+
+        // Wait for popover to close, then open settings
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") {
+                NSWorkspace.shared.open(url)
+            }
+        }
     }
 
     private func statusSection(_ status: AgentStatus) -> some View {
@@ -289,15 +310,20 @@ struct MenuBarView: View {
     }
 
     private func openWindow(id: String) {
-        if let popover = AppDelegate.shared?.popover {
-            popover.performClose(nil)
-        }
+        // Capture id before view changes
+        let windowId = id
 
-        if let window = NSApp.windows.first(where: { $0.identifier?.rawValue == id }) {
-            window.makeKeyAndOrderFront(nil)
-            NSApp.activate(ignoringOtherApps: true)
-        } else {
-            AppDelegate.shared?.openWindow(id: id)
+        // Close popover first
+        AppDelegate.shared?.popover.performClose(nil)
+
+        // Wait for popover to fully close before opening window
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            if let window = NSApp.windows.first(where: { $0.identifier?.rawValue == windowId }) {
+                window.makeKeyAndOrderFront(nil)
+                NSApp.activate(ignoringOtherApps: true)
+            } else {
+                AppDelegate.shared?.openWindow(id: windowId)
+            }
         }
     }
 
@@ -364,13 +390,17 @@ struct ViolationRow: View {
     }
 
     private func openViolationAlert() {
-        // Close the popover
-        if let popover = AppDelegate.shared?.popover {
-            popover.performClose(nil)
-        }
+        // Capture violation before view changes
+        let violation = self.violation
 
-        // Open the violation alert window (already in pending/history, don't re-add)
-        AppDelegate.shared?.showExistingViolationAlert(violation)
+        // Close popover first
+        AppDelegate.shared?.popover.performClose(nil)
+
+        // Wait for popover to fully close before opening window
+        // This prevents use-after-free when views are deallocated
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            AppDelegate.shared?.showExistingViolationAlert(violation)
+        }
     }
 }
 
@@ -438,13 +468,17 @@ struct HistoryEntryRow: View {
     }
 
     private func openViolationDetail() {
-        fputs("[HistoryEntryRow] Opening violation detail for: \(entry.violation.processName)\n", stderr)
+        // Capture violation before any view changes
+        let violation = entry.violation
 
-        // Close the popover
+        // Close popover first
         AppDelegate.shared?.popover.performClose(nil)
 
-        // Open the violation alert window (existing violation, don't re-add to history)
-        AppDelegate.shared?.showExistingViolationAlert(entry.violation)
+        // Wait for popover to fully close before opening window
+        // This prevents use-after-free when views are deallocated
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            AppDelegate.shared?.showExistingViolationAlert(violation)
+        }
     }
 }
 

@@ -6,20 +6,54 @@ struct ViolationAlertView: View {
     @State private var showAddException = false
     @State private var actionTaken = false
 
-    private func closeWindow(withAction: Bool = true) {
-        if withAction {
-            actionTaken = true
-        }
+    /// Check if this violation is pending (process stopped, awaiting user action).
+    /// If not pending, it's a historical view and action buttons should be disabled.
+    private var isPending: Bool {
+        appState.pendingViolations.contains { $0.id == violation.id }
+    }
+
+    /// Perform an action safely by deferring everything to avoid use-after-free crashes.
+    /// The action closure receives the violation ID.
+    private func performAction(_ action: @escaping (String) -> Void) {
+        // Capture everything we need before any view changes
+        let violationId = violation.id
         let window = NSApp.keyWindow
-        appState.clearPendingViolation(violation.id)
-        DispatchQueue.main.async {
-            window?.close()
+
+        // Mark action as taken immediately (synchronously)
+        actionTaken = true
+
+        // Close the window FIRST to remove view from hierarchy.
+        // This ensures no SwiftUI updates will try to reach this view
+        // when @Published properties change during state modifications.
+        window?.close()
+
+        // Wait for window/view cleanup before modifying state.
+        // This delay lets SwiftUI fully tear down the view hierarchy
+        // before we trigger any @Published changes that would cause
+        // observer notifications.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak appState] in
+            // Now safe to perform action (IPC call + state modification)
+            action(violationId)
+
+            // Clear pending violation after additional delay
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                appState?.clearPendingViolation(violationId)
+            }
         }
     }
 
     private func handleDismissWithoutAction() {
-        if !actionTaken {
-            appState.recordAction(.dismissed, forViolationId: violation.id)
+        // Only record dismissal for pending violations that were closed without action.
+        // Historical violations already have their action recorded, and calling
+        // recordAction during view deallocation can cause crashes.
+        guard !actionTaken && isPending else { return }
+
+        // Capture violation ID before any async work
+        let violationId = violation.id
+
+        // Defer the state modification to avoid crashes during view deallocation
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak appState] in
+            appState?.recordAction(.dismissed, forViolationId: violationId)
         }
     }
 
@@ -70,9 +104,9 @@ struct ViolationAlertView: View {
                     GroupBox {
                         VStack(alignment: .leading, spacing: 10) {
                             InfoRow(label: "Path", value: violation.processPath)
-                            InfoRow(label: "PID", value: "\(violation.processPid)")
+                            InfoRow(label: "PID", value: String(violation.processPid))
                             if let ppid = violation.parentPid {
-                                InfoRow(label: "Parent PID", value: "\(ppid)")
+                                InfoRow(label: "Parent PID", value: String(ppid))
                             }
                             if let cmdline = violation.processCmdline {
                                 InfoRow(label: "Command", value: cmdline)
@@ -82,7 +116,7 @@ struct ViolationAlertView: View {
                             }
                         }
                     } label: {
-                        Label("Process", systemImage: "terminal")
+                        Text("Process")
                             .font(.headline)
                     }
 
@@ -104,7 +138,7 @@ struct ViolationAlertView: View {
                             }
                         }
                     } label: {
-                        Label("Code Signing", systemImage: "signature")
+                        Text("Code Signing")
                             .font(.headline)
                     }
 
@@ -113,7 +147,7 @@ struct ViolationAlertView: View {
                         GroupBox {
                             ProcessTreeView(entries: violation.processTree)
                         } label: {
-                            Label("Process Tree", systemImage: "arrow.triangle.branch")
+                            Text("Process Tree")
                                 .font(.headline)
                         }
                     }
@@ -125,44 +159,58 @@ struct ViolationAlertView: View {
 
             // Actions - clear and unambiguous
             HStack(spacing: 12) {
-                Button(role: .destructive) {
-                    AppDelegate.shared?.handleKillProcess(eventId: violation.id)
-                    closeWindow(withAction: true)
-                } label: {
-                    Text("Terminate")
-                        .frame(minWidth: 70)
-                }
-                .help("Kill the stopped process")
+                if isPending {
+                    Button(role: .destructive) {
+                        performAction { AppDelegate.shared?.handleKillProcess(eventId: $0) }
+                    } label: {
+                        Text("Terminate")
+                            .frame(minWidth: 70)
+                    }
+                    .help("Kill the stopped process")
 
-                Button {
-                    AppDelegate.shared?.handleAllowOnce(eventId: violation.id)
-                    closeWindow(withAction: true)
-                } label: {
-                    Text("Allow Once")
-                        .frame(minWidth: 70)
-                }
-                .help("Resume the process (one-time)")
+                    Button {
+                        performAction { AppDelegate.shared?.handleAllowOnce(eventId: $0) }
+                    } label: {
+                        Text("Allow Once")
+                            .frame(minWidth: 70)
+                    }
+                    .help("Resume the process (one-time)")
 
-                Spacer()
+                    Spacer()
 
-                Button("Add Exception...") {
-                    showAddException = true
-                }
+                    Button("Add Exception...") {
+                        showAddException = true
+                    }
 
-                Button {
-                    AppDelegate.shared?.handleAllowPermanently(eventId: violation.id)
-                    closeWindow(withAction: true)
-                } label: {
-                    Text("Allow Always")
-                        .frame(minWidth: 80)
+                    Button {
+                        performAction { AppDelegate.shared?.handleAllowPermanently(eventId: $0) }
+                    } label: {
+                        Text("Allow Always")
+                            .frame(minWidth: 80)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
+                    .help("Allow and add permanent exception")
+                } else {
+                    // Historical view - show resolved status
+                    HStack(spacing: 6) {
+                        Image(systemName: "clock.badge.checkmark")
+                            .foregroundStyle(.secondary)
+                        Text("This violation has already been resolved")
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Spacer()
+
+                    Button("Close") {
+                        NSApp.keyWindow?.close()
+                    }
+                    .keyboardShortcut(.defaultAction)
                 }
-                .buttonStyle(.borderedProminent)
-                .keyboardShortcut(.defaultAction)
-                .help("Allow and add permanent exception")
             }
             .padding()
         }
-        .frame(width: 680, height: 620)
+        .frame(width: 680, height: 680)
         .sheet(isPresented: $showAddException) {
             AddExceptionSheet(violation: violation)
         }
@@ -319,8 +367,29 @@ struct AddExceptionSheet: View {
                 Spacer()
 
                 Button("Add Exception") {
-                    addException()
+                    // Capture all needed values before dismiss
+                    let expiresAt: Date? = isPermanent ? nil : Date().addingTimeInterval(TimeInterval(expirationHours * 3600))
+                    let processPath: String? = exceptionType == .process ? violation.processPath : nil
+                    let codeSigner: String? = exceptionType == .signer ? (violation.teamId ?? violation.signingId) : nil
+                    let pattern = filePattern
+                    let isGlob = filePattern.contains("*")
+
+                    // Dismiss first, then do work in next run loop
                     dismiss()
+
+                    DispatchQueue.main.async {
+                        AppDelegate.shared?.ipcClient?.addException(
+                            processPath: processPath,
+                            codeSigner: codeSigner,
+                            filePattern: pattern,
+                            isGlob: isGlob,
+                            expiresAt: expiresAt,
+                            comment: nil
+                        )
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                            AppDelegate.shared?.ipcClient?.getExceptions()
+                        }
+                    }
                 }
                 .keyboardShortcut(.defaultAction)
                 .buttonStyle(.borderedProminent)
@@ -343,22 +412,4 @@ struct AddExceptionSheet: View {
         return "Unsigned"
     }
 
-    private func addException() {
-        let expiresAt: Date? = isPermanent ? nil : Date().addingTimeInterval(TimeInterval(expirationHours * 3600))
-        let processPath: String? = exceptionType == .process ? violation.processPath : nil
-        let codeSigner: String? = exceptionType == .signer ? (violation.teamId ?? violation.signingId) : nil
-
-        AppDelegate.shared?.ipcClient?.addException(
-            processPath: processPath,
-            codeSigner: codeSigner,
-            filePattern: filePattern,
-            isGlob: filePattern.contains("*"),
-            expiresAt: expiresAt,
-            comment: nil
-        )
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-            AppDelegate.shared?.ipcClient?.getExceptions()
-        }
-    }
 }
