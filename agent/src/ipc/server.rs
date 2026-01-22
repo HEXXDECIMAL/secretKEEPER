@@ -550,7 +550,9 @@ mod tests {
         }));
         assert!(is_privileged_request(&Request::AddException {
             process_path: Some("/test".to_string()),
-            code_signer: None,
+            signer_type: None,
+            team_id: None,
+            signing_id: None,
             file_pattern: "~/.ssh/*".to_string(),
             is_glob: true,
             expires_at: None,

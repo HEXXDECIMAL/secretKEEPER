@@ -59,8 +59,13 @@ pub enum Request {
     AddException {
         #[serde(default)]
         process_path: Option<String>,
+        /// Type of signer: "team_id", "signing_id", "adhoc", "unsigned"
         #[serde(default)]
-        code_signer: Option<String>,
+        signer_type: Option<String>,
+        #[serde(default)]
+        team_id: Option<String>,
+        #[serde(default)]
+        signing_id: Option<String>,
         file_pattern: String,
         #[serde(default)]
         is_glob: bool,
@@ -482,7 +487,9 @@ mod tests {
         // Test that serializing and deserializing produces equivalent results
         let original = Request::AddException {
             process_path: Some("/usr/bin/mytool".to_string()),
-            code_signer: Some("TEAM123".to_string()),
+            signer_type: Some("team_id".to_string()),
+            team_id: Some("TEAM123".to_string()),
+            signing_id: None,
             file_pattern: "~/.ssh/*".to_string(),
             is_glob: true,
             expires_at: None,
@@ -495,14 +502,16 @@ mod tests {
         match restored {
             Request::AddException {
                 process_path,
-                code_signer,
+                signer_type,
+                team_id,
                 file_pattern,
                 is_glob,
                 comment,
                 ..
             } => {
                 assert_eq!(process_path, Some("/usr/bin/mytool".to_string()));
-                assert_eq!(code_signer, Some("TEAM123".to_string()));
+                assert_eq!(signer_type, Some("team_id".to_string()));
+                assert_eq!(team_id, Some("TEAM123".to_string()));
                 assert_eq!(file_pattern, "~/.ssh/*");
                 assert!(is_glob);
                 assert_eq!(comment, Some("Test exception".to_string()));

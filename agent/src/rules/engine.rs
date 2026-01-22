@@ -138,9 +138,14 @@ impl RuleEngine {
 
         // Check runtime exceptions
         let team_id = context.team_id.as_deref();
+        let signing_id = context.signing_id.as_deref();
         let process_path = context.path.to_string_lossy();
+        // Adhoc = has signing_id, no team_id, and not a platform binary
+        let is_adhoc = signing_id.is_some()
+            && team_id.is_none()
+            && context.platform_binary != Some(true);
         for exception in &self.exceptions {
-            if exception.matches(&process_path, team_id, file_path) {
+            if exception.matches(&process_path, team_id, signing_id, is_adhoc, file_path) {
                 if debug {
                     tracing::debug!(
                         "Process '{}' allowed by exception {}",
@@ -246,6 +251,7 @@ impl RuleEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::rules::SignerType;
     use chrono::{Duration, Utc};
     use std::path::PathBuf;
 
@@ -315,7 +321,9 @@ mod tests {
         let exception = Exception {
             id: 1,
             process_path: Some("/usr/bin/cat".to_string()),
-            code_signer: None,
+            signer_type: None,
+            team_id: None,
+            signing_id: None,
             file_pattern: "~/.ssh/*".to_string(),
             is_glob: true,
             expires_at: None,
@@ -337,7 +345,9 @@ mod tests {
         let exception = Exception {
             id: 1,
             process_path: Some("/usr/bin/cat".to_string()),
-            code_signer: None,
+            signer_type: None,
+            team_id: None,
+            signing_id: None,
             file_pattern: "~/.ssh/*".to_string(),
             is_glob: true,
             expires_at: Some(Utc::now() - Duration::hours(1)),
@@ -352,14 +362,16 @@ mod tests {
     }
 
     #[test]
-    fn test_exception_by_code_signer() {
+    fn test_exception_by_team_id() {
         let mut engine = RuleEngine::new(make_protected_files(), vec![]);
 
-        // Add an exception by code signer
+        // Add an exception by team_id
         let exception = Exception {
             id: 1,
             process_path: None,
-            code_signer: Some("TRUSTED_TEAM_ID".to_string()),
+            signer_type: Some(SignerType::TeamId),
+            team_id: Some("TRUSTED_TEAM_ID".to_string()),
+            signing_id: None,
             file_pattern: "~/.ssh/*".to_string(),
             is_glob: true,
             expires_at: None,
@@ -386,7 +398,9 @@ mod tests {
         let exception = Exception {
             id: 42,
             process_path: Some("/usr/bin/cat".to_string()),
-            code_signer: None,
+            signer_type: None,
+            team_id: None,
+            signing_id: None,
             file_pattern: "~/.ssh/*".to_string(),
             is_glob: true,
             expires_at: None,
@@ -504,7 +518,9 @@ mod tests {
         let exception = Exception {
             id: 1,
             process_path: Some("/usr/bin/cat".to_string()),
-            code_signer: None,
+            signer_type: None,
+            team_id: None,
+            signing_id: None,
             file_pattern: "~/.ssh/id_rsa".to_string(),
             is_glob: false,
             expires_at: None,

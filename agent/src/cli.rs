@@ -28,6 +28,9 @@ use std::path::PathBuf;
 
     # Check agent status
     secretkeeper-agent status
+
+    # Export exceptions to TOML (for adding to config file)
+    secretkeeper-agent dump-exceptions >> /etc/secretkeeper/exceptions.toml
 ")]
 pub struct Args {
     #[command(subcommand)]
@@ -92,6 +95,9 @@ pub enum Command {
 
     /// Check if Full Disk Access is granted (exits 0 if yes, 1 if no)
     CheckFda,
+
+    /// Dump exceptions from database in TOML format
+    DumpExceptions,
 
     /// Show version and build info
     Version,

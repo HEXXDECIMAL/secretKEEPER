@@ -1,3 +1,4 @@
+import SecretKeeperLib
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -68,6 +69,15 @@ struct ViolationHistoryView: View {
                     AgentActionBadge(action: entry.violation.action)
                 }
                 .width(min: 80, ideal: 90)
+
+                TableColumn("") { entry in
+                    if wouldBeAllowedByExceptions(exceptions: appState.exceptions, violation: entry.violation) {
+                        Image(systemName: "checkmark.shield.fill")
+                            .foregroundStyle(.green)
+                            .help("Covered by existing exception")
+                    }
+                }
+                .width(30)
             }
             .searchable(text: $searchText, prompt: "Search violations...")
             .navigationTitle("Violation History")
@@ -266,6 +276,7 @@ struct AgentActionBadge: View {
 struct HistoryDetailView: View {
     @EnvironmentObject var appState: AppState
     let entry: HistoryEntry
+    @State private var showAddException = false
 
     var body: some View {
         ScrollView {
@@ -309,6 +320,9 @@ struct HistoryDetailView: View {
                         }
                     }
                 }
+
+                // Exception coverage - always show status
+                exceptionCoverageSection
 
                 // Process tree
                 DetailSection(title: "Process Tree") {
@@ -430,6 +444,55 @@ struct HistoryDetailView: View {
     private func handleAllow() {
         // Note: AppDelegate.handleAllowPermanently already calls appState.recordAction
         AppDelegate.shared?.handleAllowPermanently(eventId: entry.id)
+    }
+
+    @ViewBuilder
+    private var exceptionCoverageSection: some View {
+        if let matchingException = findMatchingException(exceptions: appState.exceptions, violation: entry.violation) {
+            // Covered by an exception
+            DetailSection(title: "Exception Coverage") {
+                HStack(spacing: 8) {
+                    Image(systemName: "checkmark.shield.fill")
+                        .foregroundStyle(.green)
+                    Text("Covered by existing exception")
+                        .fontWeight(.medium)
+                        .foregroundStyle(.green)
+                }
+                DetailRow(label: "Pattern", value: matchingException.filePattern)
+                if let processPath = matchingException.processPath {
+                    DetailRow(label: "Process", value: processPath)
+                }
+                if let signerDesc = matchingException.signerDescription {
+                    DetailRow(label: "Signer", value: signerDesc)
+                }
+                if matchingException.isPermanent {
+                    DetailRow(label: "Duration", value: "Permanent")
+                } else if let remaining = matchingException.timeRemaining {
+                    DetailRow(label: "Expires", value: remaining)
+                }
+            }
+        } else {
+            // Not covered - show warning and option to add exception
+            DetailSection(title: "Exception Coverage") {
+                HStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.shield.fill")
+                        .foregroundStyle(.orange)
+                    Text("Not covered by any exception")
+                        .fontWeight(.medium)
+                    Spacer()
+                    Button("Add Exception...") {
+                        showAddException = true
+                    }
+                    .buttonStyle(.bordered)
+                }
+                Text("Future access to this file by this process will trigger another violation.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .sheet(isPresented: $showAddException) {
+                AddExceptionSheet(violation: entry.violation)
+            }
+        }
     }
 }
 

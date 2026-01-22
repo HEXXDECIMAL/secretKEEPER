@@ -230,6 +230,7 @@ impl super::Monitor for EsloggerMonitor {
                         }
 
                         // Check if this is a protected file and handle it
+                        // Note: process_access now handles suspension internally before building tree
                         if let Some(violation) =
                             self.context.process_access(&file_path, &context).await
                         {
@@ -240,24 +241,6 @@ impl super::Monitor for EsloggerMonitor {
                                 violation.file_path,
                                 violation.action
                             );
-
-                            // If in block or best-effort mode, suspend process and parent
-                            let mode = self.context.mode.read().await;
-                            if mode.as_str() == "block" || mode.as_str() == "best-effort" {
-                                if let Some(pid) = context.pid {
-                                    if let Err(e) = self.context.suspend_process(pid, context.ppid)
-                                    {
-                                        tracing::warn!("Failed to suspend process {}: {}", pid, e);
-                                    } else if mode.as_str() == "best-effort" {
-                                        tracing::info!("Best-effort: stopped process {} and parent (file may have been accessed)", pid);
-                                    } else {
-                                        tracing::info!(
-                                            "Suspended process {} and parent pending user decision",
-                                            pid
-                                        );
-                                    }
-                                }
-                            }
                         }
                     }
                 }

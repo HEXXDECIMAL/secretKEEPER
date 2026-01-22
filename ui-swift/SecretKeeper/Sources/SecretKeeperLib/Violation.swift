@@ -2,12 +2,12 @@ import Foundation
 import Darwin
 
 /// Current state of a process.
-enum ProcessState {
+public enum ProcessState {
     case running   // Process is alive and running
     case stopped   // Process is alive but stopped (SIGSTOP)
     case dead      // Process no longer exists
 
-    var icon: String {
+    public var icon: String {
         switch self {
         case .running: return "🟢"
         case .stopped: return "⏹️"
@@ -15,7 +15,7 @@ enum ProcessState {
         }
     }
 
-    var label: String {
+    public var label: String {
         switch self {
         case .running: return "Running"
         case .stopped: return "Stopped"
@@ -25,7 +25,7 @@ enum ProcessState {
 }
 
 /// Check the current state of a process by PID using sysctl.
-func processState(for pid: UInt32) -> ProcessState {
+public func processState(for pid: UInt32) -> ProcessState {
     // First check if process exists
     let signalResult = kill(pid_t(pid), 0)
     if signalResult != 0 {
@@ -54,20 +54,20 @@ func processState(for pid: UInt32) -> ProcessState {
 }
 
 /// A violation event from the agent.
-struct ViolationEvent: Codable, Identifiable, Hashable {
-    let id: String
-    let timestamp: Date
-    let ruleId: String?
-    let filePath: String
-    let processPath: String
-    let processPid: UInt32
-    let processCmdline: String?
-    let processEuid: UInt32?
-    let parentPid: UInt32?
-    let teamId: String?
-    let signingId: String?
-    let action: String
-    let processTree: [ProcessTreeEntry]
+public struct ViolationEvent: Codable, Identifiable, Hashable {
+    public let id: String
+    public let timestamp: Date
+    public let ruleId: String?
+    public let filePath: String
+    public let processPath: String
+    public let processPid: UInt32
+    public let processCmdline: String?
+    public let processEuid: UInt32?
+    public let parentPid: UInt32?
+    public let teamId: String?
+    public let signingId: String?
+    public let action: String
+    public let processTree: [ProcessTreeEntry]
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -85,18 +85,48 @@ struct ViolationEvent: Codable, Identifiable, Hashable {
         case processTree = "process_tree"
     }
 
+    public init(
+        id: String,
+        timestamp: Date,
+        ruleId: String?,
+        filePath: String,
+        processPath: String,
+        processPid: UInt32,
+        processCmdline: String?,
+        processEuid: UInt32?,
+        parentPid: UInt32?,
+        teamId: String?,
+        signingId: String?,
+        action: String,
+        processTree: [ProcessTreeEntry]
+    ) {
+        self.id = id
+        self.timestamp = timestamp
+        self.ruleId = ruleId
+        self.filePath = filePath
+        self.processPath = processPath
+        self.processPid = processPid
+        self.processCmdline = processCmdline
+        self.processEuid = processEuid
+        self.parentPid = parentPid
+        self.teamId = teamId
+        self.signingId = signingId
+        self.action = action
+        self.processTree = processTree
+    }
+
     /// Process name extracted from path.
-    var processName: String {
+    public var processName: String {
         processPath.components(separatedBy: "/").last ?? "Unknown"
     }
 
     /// File name extracted from path.
-    var fileName: String {
+    public var fileName: String {
         filePath.components(separatedBy: "/").last ?? "Unknown"
     }
 
     /// Signing status for UI display.
-    var signingStatus: SigningStatus {
+    public var signingStatus: SigningStatus {
         // Check for Apple platform binaries first
         if let entry = processTree.first, entry.isPlatformBinary {
             return .platform
@@ -115,22 +145,22 @@ struct ViolationEvent: Codable, Identifiable, Hashable {
 }
 
 /// Process tree entry for EDR-style display.
-struct ProcessTreeEntry: Codable, Identifiable, Hashable {
-    let pid: UInt32
-    let ppid: UInt32?
-    let name: String
-    let path: String
-    let cwd: String?
-    let cmdline: String?
-    let uid: UInt32?
-    let euid: UInt32?
-    let teamId: String?
-    let signingId: String?
-    let isPlatformBinary: Bool
+public struct ProcessTreeEntry: Codable, Identifiable, Hashable {
+    public let pid: UInt32
+    public let ppid: UInt32?
+    public let name: String
+    public let path: String
+    public let cwd: String?
+    public let cmdline: String?
+    public let uid: UInt32?
+    public let euid: UInt32?
+    public let teamId: String?
+    public let signingId: String?
+    public let isPlatformBinary: Bool
     /// Whether this process is currently stopped (SIGSTOP).
-    let isStopped: Bool
+    public let isStopped: Bool
 
-    var id: UInt32 { pid }
+    public var id: UInt32 { pid }
 
     enum CodingKeys: String, CodingKey {
         case pid
@@ -147,7 +177,35 @@ struct ProcessTreeEntry: Codable, Identifiable, Hashable {
         case isStopped = "is_stopped"
     }
 
-    init(from decoder: Decoder) throws {
+    public init(
+        pid: UInt32,
+        ppid: UInt32?,
+        name: String,
+        path: String,
+        cwd: String?,
+        cmdline: String?,
+        uid: UInt32?,
+        euid: UInt32?,
+        teamId: String?,
+        signingId: String?,
+        isPlatformBinary: Bool,
+        isStopped: Bool
+    ) {
+        self.pid = pid
+        self.ppid = ppid
+        self.name = name
+        self.path = path
+        self.cwd = cwd
+        self.cmdline = cmdline
+        self.uid = uid
+        self.euid = euid
+        self.teamId = teamId
+        self.signingId = signingId
+        self.isPlatformBinary = isPlatformBinary
+        self.isStopped = isStopped
+    }
+
+    public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         pid = try container.decode(UInt32.self, forKey: .pid)
         ppid = try container.decodeIfPresent(UInt32.self, forKey: .ppid)
@@ -164,7 +222,7 @@ struct ProcessTreeEntry: Codable, Identifiable, Hashable {
     }
 
     /// Signing status for UI display.
-    var signingStatus: SigningStatus {
+    public var signingStatus: SigningStatus {
         if isPlatformBinary {
             return .platform
         }
@@ -181,19 +239,19 @@ struct ProcessTreeEntry: Codable, Identifiable, Hashable {
     }
 
     /// Current state of this process (live check).
-    var currentState: ProcessState {
+    public var currentState: ProcessState {
         processState(for: pid)
     }
 }
 
 /// Code signing status for color coding.
-enum SigningStatus {
+public enum SigningStatus {
     case platform  // Apple/system binary (blue)
     case signed    // Third-party signed with valid team ID (green)
     case adhoc     // Ad-hoc/self-signed - has signingId but no teamId (orange)
     case unsigned  // No signature at all (red)
 
-    var color: String {
+    public var color: String {
         switch self {
         case .platform: return "systemBlue"
         case .signed: return "systemGreen"
@@ -202,7 +260,7 @@ enum SigningStatus {
         }
     }
 
-    var label: String {
+    public var label: String {
         switch self {
         case .platform: return "Platform"
         case .signed: return "Signed"
@@ -213,14 +271,14 @@ enum SigningStatus {
 }
 
 /// User action taken on a violation.
-enum UserAction: String, Codable {
+public enum UserAction: String, Codable {
     case resumed    // User clicked Resume (allow_once)
     case killed     // User clicked Kill
     case allowed    // User clicked OK (allow_permanently)
     case pending    // No action taken yet (process still stopped)
     case dismissed  // User closed without action (process remained stopped)
 
-    var label: String {
+    public var label: String {
         switch self {
         case .resumed: return "Resumed"
         case .killed: return "Killed"
@@ -230,7 +288,7 @@ enum UserAction: String, Codable {
         }
     }
 
-    var icon: String {
+    public var icon: String {
         switch self {
         case .resumed: return "play.circle.fill"
         case .killed: return "xmark.circle.fill"
@@ -242,13 +300,13 @@ enum UserAction: String, Codable {
 }
 
 /// A history entry wrapping a violation event with the user's action.
-struct HistoryEntry: Identifiable, Hashable {
-    let id: String
-    let violation: ViolationEvent
-    var userAction: UserAction
-    var actionTimestamp: Date?
+public struct HistoryEntry: Identifiable, Hashable {
+    public let id: String
+    public let violation: ViolationEvent
+    public var userAction: UserAction
+    public var actionTimestamp: Date?
 
-    init(violation: ViolationEvent, userAction: UserAction = .pending) {
+    public init(violation: ViolationEvent, userAction: UserAction = .pending) {
         self.id = violation.id
         self.violation = violation
         self.userAction = userAction
@@ -256,7 +314,7 @@ struct HistoryEntry: Identifiable, Hashable {
     }
 
     /// Check if the process is still actionable (either process or parent is stopped).
-    var isProcessActionable: Bool {
+    public var isProcessActionable: Bool {
         guard userAction == .pending || userAction == .dismissed else {
             return false
         }
@@ -271,12 +329,12 @@ struct HistoryEntry: Identifiable, Hashable {
     }
 
     /// Get current state of the violating process.
-    var processCurrentState: ProcessState {
+    public var processCurrentState: ProcessState {
         processState(for: violation.processPid)
     }
 
     /// Get current state of the parent process.
-    var parentCurrentState: ProcessState? {
+    public var parentCurrentState: ProcessState? {
         guard let ppid = violation.parentPid else { return nil }
         return processState(for: ppid)
     }

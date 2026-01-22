@@ -54,6 +54,9 @@ async fn main() -> Result<()> {
         Some(Command::Status) => {
             return show_status(&args).await;
         }
+        Some(Command::DumpExceptions) => {
+            return dump_exceptions(&args);
+        }
         Some(Command::Run) | None => {
             // Continue to run the agent
         }
@@ -585,6 +588,59 @@ async fn show_status(args: &Args) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn dump_exceptions(args: &Args) -> Result<()> {
+    let config = load_config(args)?;
+
+    if !config.agent.database_path.exists() {
+        eprintln!("Database not found: {}", config.agent.database_path.display());
+        eprintln!("No exceptions to dump.");
+        return Ok(());
+    }
+
+    let storage = Storage::open(&config.agent.database_path)?;
+    let exceptions = storage.get_exceptions()?;
+
+    if exceptions.is_empty() {
+        eprintln!("# No exceptions found in database");
+        return Ok(());
+    }
+
+    println!("# Exceptions exported from {}", config.agent.database_path.display());
+    println!("# Generated: {}", chrono::Utc::now().to_rfc3339());
+    println!("# Count: {}", exceptions.len());
+    println!();
+
+    for exception in exceptions {
+        println!("[[exceptions]]");
+        if let Some(ref process_path) = exception.process_path {
+            println!("process_path = \"{}\"", escape_toml_string(process_path));
+        }
+        if let Some(ref signer_type) = exception.signer_type {
+            println!("signer_type = \"{}\"", signer_type);
+        }
+        if let Some(ref team_id) = exception.team_id {
+            println!("team_id = \"{}\"", escape_toml_string(team_id));
+        }
+        if let Some(ref signing_id) = exception.signing_id {
+            println!("signing_id = \"{}\"", escape_toml_string(signing_id));
+        }
+        println!("file_pattern = \"{}\"", escape_toml_string(&exception.file_pattern));
+        if let Some(ref expires_at) = exception.expires_at {
+            println!("expires_at = \"{}\"", expires_at.to_rfc3339());
+        }
+        if let Some(ref comment) = exception.comment {
+            println!("comment = \"{}\"", escape_toml_string(comment));
+        }
+        println!();
+    }
+
+    Ok(())
+}
+
+fn escape_toml_string(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
 fn init_logging(args: &Args, config_log_level: &str) {

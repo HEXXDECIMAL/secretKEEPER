@@ -1,4 +1,5 @@
 import Foundation
+import SecretKeeperLib
 import SwiftUI
 
 /// Central app state, observable across all views.

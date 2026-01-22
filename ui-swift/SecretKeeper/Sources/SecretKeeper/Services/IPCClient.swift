@@ -1,4 +1,5 @@
 import Foundation
+import SecretKeeperLib
 
 protocol IPCClientDelegate: AnyObject {
     func ipcClient(_ client: IPCClient, didReceiveViolation violation: ViolationEvent)
@@ -222,9 +223,28 @@ class IPCClient: NSObject {
         expiresAt: Date? = nil,
         comment: String? = nil
     ) {
+        // Infer signer type from codeSigner format (backward compatible)
+        var signerType: String? = nil
+        var teamId: String? = nil
+        var signingId: String? = nil
+
+        if let signer = codeSigner {
+            // Team IDs are typically uppercase alphanumeric, 10 chars
+            if signer.count == 10 && signer.allSatisfy({ $0.isUppercase || $0.isNumber }) {
+                signerType = "team_id"
+                teamId = signer
+            } else {
+                // Otherwise treat as signing ID
+                signerType = "signing_id"
+                signingId = signer
+            }
+        }
+
         send(AddExceptionRequest(
             processPath: processPath,
-            codeSigner: codeSigner,
+            signerType: signerType,
+            teamId: teamId,
+            signingId: signingId,
             filePattern: filePattern,
             isGlob: isGlob,
             expiresAt: expiresAt,

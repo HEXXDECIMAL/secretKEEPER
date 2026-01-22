@@ -19,6 +19,9 @@ build-release:
 
 test:
 	$(CARGO) test
+	@echo "Running Swift tests..."
+	@cd ui-swift/SecretKeeper && DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
+		/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swift test
 
 lint:
 	$(CARGO) clippy -- -D warnings

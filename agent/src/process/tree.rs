@@ -56,6 +56,7 @@ pub fn build_process_tree(pid: u32) -> Vec<ProcessTreeEntry> {
             }
             current_pid = ppid.unwrap_or(0);
         } else {
+            tracing::debug!("Failed to get process info for PID {} - process may have exited", current_pid);
             break;
         }
     }
@@ -113,7 +114,7 @@ fn get_process_info(pid: u32) -> Option<ProcessTreeEntry> {
     let cwd = get_cwd_macos(pid);
 
     // Check if process is stopped
-    let is_stopped = is_process_stopped_macos(pid);
+    let is_stopped = is_process_stopped(pid);
 
     Some(ProcessTreeEntry {
         pid,
@@ -131,8 +132,9 @@ fn get_process_info(pid: u32) -> Option<ProcessTreeEntry> {
     })
 }
 
+/// Check if a process is stopped (SIGSTOP) by querying its state.
 #[cfg(target_os = "macos")]
-fn is_process_stopped_macos(pid: u32) -> bool {
+pub fn is_process_stopped(pid: u32) -> bool {
     use std::process::Command;
 
     // Use ps to get process state
@@ -148,6 +150,47 @@ fn is_process_stopped_macos(pid: u32) -> bool {
             return state.trim().starts_with('T');
         }
     }
+    false
+}
+
+/// Check if a process is stopped (SIGSTOP) by reading /proc/PID/stat.
+#[cfg(target_os = "linux")]
+pub fn is_process_stopped(pid: u32) -> bool {
+    std::fs::read_to_string(format!("/proc/{}/stat", pid))
+        .ok()
+        .map(|stat| {
+            // Format: pid (comm) state ...
+            // State T = stopped
+            stat.split(')')
+                .nth(1)
+                .map(|s| s.trim().starts_with('T'))
+                .unwrap_or(false)
+        })
+        .unwrap_or(false)
+}
+
+/// Check if a process is stopped on FreeBSD.
+#[cfg(target_os = "freebsd")]
+pub fn is_process_stopped(pid: u32) -> bool {
+    use std::process::Command;
+
+    Command::new(paths::PS)
+        .args(["-p", &pid.to_string(), "-o", "state="])
+        .output()
+        .ok()
+        .map(|o| {
+            if o.status.success() {
+                String::from_utf8_lossy(&o.stdout).trim().starts_with('T')
+            } else {
+                false
+            }
+        })
+        .unwrap_or(false)
+}
+
+/// Fallback for unsupported platforms.
+#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "freebsd")))]
+pub fn is_process_stopped(_pid: u32) -> bool {
     false
 }
 

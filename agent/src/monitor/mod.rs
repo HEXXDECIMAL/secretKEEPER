@@ -287,7 +287,9 @@ impl MonitorContext {
             Decision::Deny => {
                 self.stats.violations.fetch_add(1, Ordering::Relaxed);
                 let mode = self.mode.read().await;
-                let action = match mode.as_str() {
+                let mode_str = mode.as_str();
+                let should_stop = mode_str == "block" || mode_str == "best-effort";
+                let action = match mode_str {
                     "block" => "blocked",
                     "best-effort" => "stopped",
                     _ => "logged",
@@ -300,8 +302,26 @@ impl MonitorContext {
                     action
                 );
 
-                // Build process tree - start with the violating process from event data
-                // (since short-lived processes like `cat` may exit before we can query them)
+                // Stop processes FIRST so they can't exit while we build the tree
+                if should_stop {
+                    if let Some(pid) = context.pid {
+                        if let Err(e) = self.suspend_process(pid, context.ppid) {
+                            tracing::warn!("Failed to suspend process {}: {}", pid, e);
+                        } else if mode_str == "best-effort" {
+                            tracing::info!(
+                                "Best-effort: stopped process {} and parent (file may have been accessed)",
+                                pid
+                            );
+                        } else {
+                            tracing::info!(
+                                "Suspended process {} and parent pending user decision",
+                                pid
+                            );
+                        }
+                    }
+                }
+
+                // Build process tree AFTER stopping - processes are now stopped and can be queried
                 let tree = build_tree_from_context(context);
 
                 // Create violation record with all context
@@ -456,8 +476,14 @@ pub fn create_monitor(
 /// Build process tree from ProcessContext.
 /// Creates the first entry from the context (since the process may have exited),
 /// then builds the parent chain by querying the system.
+///
+/// This should be called AFTER processes have been stopped (if applicable),
+/// so the is_stopped state will be accurately captured.
 fn build_tree_from_context(context: &ProcessContext) -> Vec<ProcessTreeEntry> {
+    use crate::process::is_process_stopped;
+
     let mut tree = Vec::new();
+    let pid = context.pid.unwrap_or(0);
 
     // Create entry for the violating process from the event data we already have
     // This is important because short-lived processes (cat, grep, etc.) may exit
@@ -468,8 +494,11 @@ fn build_tree_from_context(context: &ProcessContext) -> Vec<ProcessTreeEntry> {
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_default();
 
+    // Query actual stopped state - processes should already be stopped if applicable
+    let is_stopped = if pid > 0 { is_process_stopped(pid) } else { false };
+
     let first_entry = ProcessTreeEntry {
-        pid: context.pid.unwrap_or(0),
+        pid,
         ppid: context.ppid,
         name: process_name,
         path: context.path.to_string_lossy().to_string(),
@@ -480,17 +509,27 @@ fn build_tree_from_context(context: &ProcessContext) -> Vec<ProcessTreeEntry> {
         team_id: context.team_id.clone(),
         signing_id: context.signing_id.clone(),
         is_platform_binary: context.platform_binary.unwrap_or(false),
-        is_stopped: false,
+        is_stopped,
     };
     tree.push(first_entry);
 
     // Now build the rest of the tree from the parent PID
-    // The parent should still be running (e.g., shell, terminal)
+    // Parent should be stopped too if we stopped it, so it can be queried reliably
     if let Some(ppid) = context.ppid {
         if ppid > 0 {
             let parent_tree = build_process_tree(ppid);
-            tree.extend(parent_tree);
+            if parent_tree.is_empty() {
+                tracing::debug!(
+                    "Parent process tree empty for ppid {} (child pid {:?})",
+                    ppid,
+                    context.pid
+                );
+            } else {
+                tree.extend(parent_tree);
+            }
         }
+    } else {
+        tracing::debug!("No ppid available for process {:?}", context.pid);
     }
 
     tree

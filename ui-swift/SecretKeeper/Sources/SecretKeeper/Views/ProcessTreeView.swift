@@ -1,3 +1,4 @@
+import SecretKeeperLib
 import SwiftUI
 
 /// Compact process tree visualization for security analysis.

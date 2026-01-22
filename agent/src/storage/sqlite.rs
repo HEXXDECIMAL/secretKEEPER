@@ -2,7 +2,7 @@
 
 use crate::error::{Error, Result};
 use crate::process::ProcessTreeEntry;
-use crate::rules::Exception;
+use crate::rules::{Exception, SignerType};
 use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection, OptionalExtension};
 use std::path::Path;
@@ -80,18 +80,23 @@ impl Storage {
             CREATE TABLE IF NOT EXISTS exceptions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 process_path TEXT,
-                code_signer TEXT,
+                signer_type TEXT,
+                team_id TEXT,
+                signing_id TEXT,
                 file_pattern TEXT NOT NULL,
                 is_glob INTEGER DEFAULT 0,
                 expires_at TEXT,
                 added_by TEXT NOT NULL,
                 comment TEXT,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                CONSTRAINT chk_identifier CHECK (process_path IS NOT NULL OR code_signer IS NOT NULL)
+                CONSTRAINT chk_identifier CHECK (
+                    process_path IS NOT NULL OR signer_type IS NOT NULL
+                )
             );
 
             CREATE INDEX IF NOT EXISTS idx_exceptions_process ON exceptions(process_path);
-            CREATE INDEX IF NOT EXISTS idx_exceptions_signer ON exceptions(code_signer);
+            CREATE INDEX IF NOT EXISTS idx_exceptions_team_id ON exceptions(team_id);
+            CREATE INDEX IF NOT EXISTS idx_exceptions_signing_id ON exceptions(signing_id);
 
             CREATE TABLE IF NOT EXISTS agent_state (
                 key TEXT PRIMARY KEY,
@@ -242,13 +247,15 @@ impl Storage {
         conn.execute(
             r#"
             INSERT INTO exceptions (
-                process_path, code_signer, file_pattern, is_glob,
-                expires_at, added_by, comment
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                process_path, signer_type, team_id, signing_id,
+                file_pattern, is_glob, expires_at, added_by, comment
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
             "#,
             params![
                 exception.process_path,
-                exception.code_signer,
+                exception.signer_type.map(|s| s.to_string()),
+                exception.team_id,
+                exception.signing_id,
                 exception.file_pattern,
                 exception.is_glob as i32,
                 exception.expires_at.map(|dt| dt.to_rfc3339()),
@@ -275,11 +282,14 @@ impl Storage {
         while let Some(row) = rows.next()? {
             let expires_at_str: Option<String> = row.get("expires_at")?;
             let created_at_str: String = row.get("created_at")?;
+            let signer_type_str: Option<String> = row.get("signer_type")?;
 
             exceptions.push(Exception {
                 id: row.get("id")?,
                 process_path: row.get("process_path")?,
-                code_signer: row.get("code_signer")?,
+                signer_type: signer_type_str.and_then(|s| s.parse::<SignerType>().ok()),
+                team_id: row.get("team_id")?,
+                signing_id: row.get("signing_id")?,
                 file_pattern: row.get("file_pattern")?,
                 is_glob: row.get::<_, i32>("is_glob")? != 0,
                 expires_at: expires_at_str.and_then(|s| {
@@ -481,7 +491,9 @@ mod tests {
         let exception = Exception {
             id: 0,
             process_path: Some("/usr/local/bin/tool".to_string()),
-            code_signer: None,
+            signer_type: None,
+            team_id: None,
+            signing_id: None,
             file_pattern: "~/.ssh/*".to_string(),
             is_glob: true,
             expires_at: None,
@@ -598,7 +610,9 @@ mod tests {
         let valid_exception = Exception {
             id: 0,
             process_path: Some("/usr/bin/valid".to_string()),
-            code_signer: None,
+            signer_type: None,
+            team_id: None,
+            signing_id: None,
             file_pattern: "~/.ssh/*".to_string(),
             is_glob: true,
             expires_at: Some(Utc::now() + Duration::hours(1)),
@@ -612,7 +626,9 @@ mod tests {
         let expired_exception = Exception {
             id: 0,
             process_path: Some("/usr/bin/expired".to_string()),
-            code_signer: None,
+            signer_type: None,
+            team_id: None,
+            signing_id: None,
             file_pattern: "~/.aws/*".to_string(),
             is_glob: true,
             expires_at: Some(Utc::now() - Duration::hours(1)),
@@ -629,13 +645,15 @@ mod tests {
     }
 
     #[test]
-    fn test_exception_with_code_signer() {
+    fn test_exception_with_team_id() {
         let storage = Storage::in_memory().unwrap();
 
         let exception = Exception {
             id: 0,
             process_path: None,
-            code_signer: Some("APPLE_TEAM_123".to_string()),
+            signer_type: Some(SignerType::TeamId),
+            team_id: Some("APPLE_TEAM_123".to_string()),
+            signing_id: None,
             file_pattern: "~/.ssh/*".to_string(),
             is_glob: true,
             expires_at: None,
@@ -650,10 +668,8 @@ mod tests {
         assert_eq!(exceptions.len(), 1);
         assert_eq!(exceptions[0].id, id);
         assert!(exceptions[0].process_path.is_none());
-        assert_eq!(
-            exceptions[0].code_signer,
-            Some("APPLE_TEAM_123".to_string())
-        );
+        assert_eq!(exceptions[0].signer_type, Some(SignerType::TeamId));
+        assert_eq!(exceptions[0].team_id, Some("APPLE_TEAM_123".to_string()));
     }
 
     #[test]
@@ -731,7 +747,9 @@ mod tests {
         let exception = Exception {
             id: 0,
             process_path: Some("/usr/bin/ssh".to_string()),
-            code_signer: None,
+            signer_type: None,
+            team_id: None,
+            signing_id: None,
             file_pattern: "~/.ssh/*".to_string(),
             is_glob: true,
             expires_at: None, // Permanent
@@ -800,5 +818,188 @@ mod tests {
 
         let exceptions = storage.get_exceptions().unwrap();
         assert!(exceptions.is_empty());
+    }
+
+    // Edge case tests for signer types
+
+    #[test]
+    fn test_exception_with_signing_id_type() {
+        let storage = Storage::in_memory().unwrap();
+
+        let exception = Exception {
+            id: 0,
+            process_path: None,
+            signer_type: Some(SignerType::SigningId),
+            team_id: None,
+            signing_id: Some("com.apple.bluetoothd".to_string()),
+            file_pattern: "/Library/Keychains/*".to_string(),
+            is_glob: true,
+            expires_at: None,
+            added_by: "test".to_string(),
+            comment: Some("Allow platform binary".to_string()),
+            created_at: Utc::now(),
+        };
+
+        let id = storage.add_exception(&exception).unwrap();
+        let exceptions = storage.get_exceptions().unwrap();
+
+        assert_eq!(exceptions.len(), 1);
+        assert_eq!(exceptions[0].id, id);
+        assert_eq!(exceptions[0].signer_type, Some(SignerType::SigningId));
+        assert_eq!(exceptions[0].signing_id, Some("com.apple.bluetoothd".to_string()));
+        assert!(exceptions[0].team_id.is_none());
+    }
+
+    #[test]
+    fn test_exception_with_adhoc_type() {
+        let storage = Storage::in_memory().unwrap();
+
+        let exception = Exception {
+            id: 0,
+            process_path: None,
+            signer_type: Some(SignerType::Adhoc),
+            team_id: None,
+            signing_id: Some("adhoc-app-signing-id".to_string()),
+            file_pattern: "~/.ssh/*".to_string(),
+            is_glob: true,
+            expires_at: None,
+            added_by: "test".to_string(),
+            comment: None,
+            created_at: Utc::now(),
+        };
+
+        storage.add_exception(&exception).unwrap();
+        let exceptions = storage.get_exceptions().unwrap();
+
+        assert_eq!(exceptions.len(), 1);
+        assert_eq!(exceptions[0].signer_type, Some(SignerType::Adhoc));
+    }
+
+    #[test]
+    fn test_exception_with_unsigned_type() {
+        let storage = Storage::in_memory().unwrap();
+
+        let exception = Exception {
+            id: 0,
+            process_path: Some("/usr/local/bin/unsigned-tool".to_string()),
+            signer_type: Some(SignerType::Unsigned),
+            team_id: None,
+            signing_id: None,
+            file_pattern: "~/.ssh/*".to_string(),
+            is_glob: true,
+            expires_at: None,
+            added_by: "test".to_string(),
+            comment: None,
+            created_at: Utc::now(),
+        };
+
+        storage.add_exception(&exception).unwrap();
+        let exceptions = storage.get_exceptions().unwrap();
+
+        assert_eq!(exceptions.len(), 1);
+        assert_eq!(exceptions[0].signer_type, Some(SignerType::Unsigned));
+        assert!(exceptions[0].team_id.is_none());
+        assert!(exceptions[0].signing_id.is_none());
+    }
+
+    #[test]
+    fn test_exception_signer_type_roundtrip() {
+        // Test that all signer types survive database round-trip
+        let storage = Storage::in_memory().unwrap();
+
+        let types = vec![
+            SignerType::TeamId,
+            SignerType::SigningId,
+            SignerType::Adhoc,
+            SignerType::Unsigned,
+        ];
+
+        for (i, signer_type) in types.into_iter().enumerate() {
+            let exception = Exception {
+                id: 0,
+                process_path: Some(format!("/test/path/{}", i)),
+                signer_type: Some(signer_type),
+                team_id: if signer_type == SignerType::TeamId {
+                    Some("TEST_TEAM".to_string())
+                } else {
+                    None
+                },
+                signing_id: if signer_type == SignerType::SigningId || signer_type == SignerType::Adhoc {
+                    Some("test.signing.id".to_string())
+                } else {
+                    None
+                },
+                file_pattern: format!("~/.test/{}", i),
+                is_glob: false,
+                expires_at: None,
+                added_by: "test".to_string(),
+                comment: None,
+                created_at: Utc::now(),
+            };
+            storage.add_exception(&exception).unwrap();
+        }
+
+        let exceptions = storage.get_exceptions().unwrap();
+        assert_eq!(exceptions.len(), 4);
+
+        // Verify each type was preserved
+        let found_types: Vec<_> = exceptions.iter().filter_map(|e| e.signer_type).collect();
+        assert!(found_types.contains(&SignerType::TeamId));
+        assert!(found_types.contains(&SignerType::SigningId));
+        assert!(found_types.contains(&SignerType::Adhoc));
+        assert!(found_types.contains(&SignerType::Unsigned));
+    }
+
+    #[test]
+    fn test_exception_with_both_team_and_signing_id() {
+        // An exception can have both team_id and signing_id (for documentation)
+        let storage = Storage::in_memory().unwrap();
+
+        let exception = Exception {
+            id: 0,
+            process_path: None,
+            signer_type: Some(SignerType::TeamId),
+            team_id: Some("DEVELOPER123".to_string()),
+            signing_id: Some("com.developer.app".to_string()), // For reference
+            file_pattern: "~/.ssh/*".to_string(),
+            is_glob: true,
+            expires_at: None,
+            added_by: "test".to_string(),
+            comment: None,
+            created_at: Utc::now(),
+        };
+
+        storage.add_exception(&exception).unwrap();
+        let exceptions = storage.get_exceptions().unwrap();
+
+        assert_eq!(exceptions.len(), 1);
+        assert_eq!(exceptions[0].team_id, Some("DEVELOPER123".to_string()));
+        assert_eq!(exceptions[0].signing_id, Some("com.developer.app".to_string()));
+    }
+
+    #[test]
+    fn test_exception_no_signer_type() {
+        // Exception with signer_type=None should be stored and retrieved correctly
+        let storage = Storage::in_memory().unwrap();
+
+        let exception = Exception {
+            id: 0,
+            process_path: Some("/usr/bin/tool".to_string()),
+            signer_type: None,
+            team_id: None,
+            signing_id: None,
+            file_pattern: "~/.ssh/*".to_string(),
+            is_glob: true,
+            expires_at: None,
+            added_by: "test".to_string(),
+            comment: None,
+            created_at: Utc::now(),
+        };
+
+        storage.add_exception(&exception).unwrap();
+        let exceptions = storage.get_exceptions().unwrap();
+
+        assert_eq!(exceptions.len(), 1);
+        assert!(exceptions[0].signer_type.is_none());
     }
 }

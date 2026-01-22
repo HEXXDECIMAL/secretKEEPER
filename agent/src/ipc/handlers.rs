@@ -1,7 +1,7 @@
 //! Request handlers for IPC commands.
 
 use super::protocol::{Category, Request, Response, ViolationEvent};
-use crate::rules::{Exception, RuleEngine};
+use crate::rules::{Exception, RuleEngine, SignerType};
 use crate::storage::{Storage, Violation};
 use chrono::Utc;
 use std::sync::Arc;
@@ -70,7 +70,9 @@ impl HandlerState {
 
             Request::AddException {
                 process_path,
-                code_signer,
+                signer_type,
+                team_id,
+                signing_id,
                 file_pattern,
                 is_glob,
                 expires_at,
@@ -78,7 +80,9 @@ impl HandlerState {
             } => {
                 self.handle_add_exception(
                     process_path,
-                    code_signer,
+                    signer_type,
+                    team_id,
+                    signing_id,
                     file_pattern,
                     is_glob,
                     expires_at,
@@ -206,20 +210,47 @@ impl HandlerState {
     async fn handle_add_exception(
         &self,
         process_path: Option<String>,
-        code_signer: Option<String>,
+        signer_type: Option<String>,
+        team_id: Option<String>,
+        signing_id: Option<String>,
         file_pattern: String,
         is_glob: bool,
         expires_at: Option<chrono::DateTime<Utc>>,
         comment: Option<String>,
     ) -> Response {
-        if process_path.is_none() && code_signer.is_none() {
-            return Response::error("Must specify either process_path or code_signer");
+        // Must have at least one identifier
+        let has_signer = team_id.is_some() || signing_id.is_some() || signer_type.is_some();
+        if process_path.is_none() && !has_signer {
+            return Response::error(
+                "Must specify either process_path or signer (signer_type + team_id/signing_id)",
+            );
         }
+
+        // Parse signer_type if provided
+        let parsed_signer_type: Option<SignerType> = match signer_type {
+            Some(s) => match s.parse() {
+                Ok(t) => Some(t),
+                Err(e) => return Response::error(format!("Invalid signer_type: {}", e)),
+            },
+            None => {
+                // Infer signer_type from team_id/signing_id if not explicitly provided
+                if team_id.is_some() {
+                    Some(SignerType::TeamId)
+                } else if signing_id.is_some() {
+                    // Default to SigningId if only signing_id is provided
+                    Some(SignerType::SigningId)
+                } else {
+                    None
+                }
+            }
+        };
 
         let exception = Exception {
             id: 0, // Set by database
             process_path,
-            code_signer,
+            signer_type: parsed_signer_type,
+            team_id,
+            signing_id,
             file_pattern,
             is_glob,
             expires_at,
@@ -311,11 +342,24 @@ impl HandlerState {
             }
         };
 
-        // Create exception
+        // Create exception - determine signer type from event
+        let (signer_type, team_id, signing_id) = if event.team_id.is_some() {
+            (Some(SignerType::TeamId), event.team_id.clone(), event.signing_id.clone())
+        } else if event.signing_id.is_some() {
+            // No team_id but has signing_id - could be platform binary or adhoc
+            // Use SigningId type for platform binaries
+            (Some(SignerType::SigningId), None, event.signing_id.clone())
+        } else {
+            // No signing info at all
+            (None, None, None)
+        };
+
         let exception = Exception {
             id: 0,
             process_path: Some(event.process_path.clone()),
-            code_signer: event.team_id.clone(),
+            signer_type,
+            team_id,
+            signing_id,
             file_pattern: event.file_path.clone(),
             is_glob: false,
             expires_at,
@@ -640,7 +684,9 @@ mod tests {
         let response = state
             .handle(Request::AddException {
                 process_path: Some("/usr/bin/test".to_string()),
-                code_signer: None,
+                signer_type: None,
+                team_id: None,
+                signing_id: None,
                 file_pattern: "~/.ssh/*".to_string(),
                 is_glob: true,
                 expires_at: None,
@@ -663,7 +709,9 @@ mod tests {
         let response = state
             .handle(Request::AddException {
                 process_path: None,
-                code_signer: Some("APPLE123".to_string()),
+                signer_type: Some("team_id".to_string()),
+                team_id: Some("APPLE123".to_string()),
+                signing_id: None,
                 file_pattern: "~/.ssh/*".to_string(),
                 is_glob: true,
                 expires_at: None,
@@ -682,7 +730,9 @@ mod tests {
         let response = state
             .handle(Request::AddException {
                 process_path: None,
-                code_signer: None,
+                signer_type: None,
+                team_id: None,
+                signing_id: None,
                 file_pattern: "~/.ssh/*".to_string(),
                 is_glob: true,
                 expires_at: None,
@@ -691,7 +741,7 @@ mod tests {
             .await;
         match response {
             Response::Error { message, .. } => {
-                assert!(message.contains("process_path") || message.contains("code_signer"))
+                assert!(message.contains("process_path") || message.contains("signer"))
             }
             _ => panic!("Expected Error response"),
         }
@@ -705,7 +755,9 @@ mod tests {
         let exception = Exception {
             id: 0,
             process_path: Some("/test".to_string()),
-            code_signer: None,
+            signer_type: None,
+            team_id: None,
+            signing_id: None,
             file_pattern: "~/.test".to_string(),
             is_glob: false,
             expires_at: None,
@@ -1001,5 +1053,224 @@ mod tests {
 
         // Should still succeed (no-op for unknown category)
         assert!(matches!(response, Response::Success { .. }));
+    }
+
+    // Edge case tests for reliability
+
+    #[tokio::test]
+    async fn test_handle_add_exception_with_signing_id_only() {
+        // Adding exception with only signing_id should infer signer_type
+        let (state, _dir) = create_test_state();
+        let response = state
+            .handle(Request::AddException {
+                process_path: None,
+                signer_type: None, // Not specified
+                team_id: None,
+                signing_id: Some("com.apple.bluetoothd".to_string()),
+                file_pattern: "~/.ssh/*".to_string(),
+                is_glob: true,
+                expires_at: None,
+                comment: None,
+            })
+            .await;
+
+        // Should succeed - signing_id alone is valid
+        match response {
+            Response::Success { message } => assert!(message.contains("Exception added")),
+            _ => panic!("Expected Success response"),
+        }
+
+        // Verify the exception was stored with inferred signer_type
+        let exceptions = state.storage.get_exceptions().unwrap();
+        assert_eq!(exceptions.len(), 1);
+        assert_eq!(exceptions[0].signer_type, Some(crate::rules::SignerType::SigningId));
+    }
+
+    #[tokio::test]
+    async fn test_handle_add_exception_with_team_id_only() {
+        // Adding exception with only team_id should infer signer_type
+        let (state, _dir) = create_test_state();
+        let response = state
+            .handle(Request::AddException {
+                process_path: None,
+                signer_type: None, // Not specified
+                team_id: Some("APPLE123".to_string()),
+                signing_id: None,
+                file_pattern: "~/.ssh/*".to_string(),
+                is_glob: true,
+                expires_at: None,
+                comment: None,
+            })
+            .await;
+
+        // Should succeed
+        match response {
+            Response::Success { message } => assert!(message.contains("Exception added")),
+            _ => panic!("Expected Success response"),
+        }
+
+        // Verify the exception was stored with inferred signer_type
+        let exceptions = state.storage.get_exceptions().unwrap();
+        assert_eq!(exceptions.len(), 1);
+        assert_eq!(exceptions[0].signer_type, Some(crate::rules::SignerType::TeamId));
+    }
+
+    #[tokio::test]
+    async fn test_handle_add_exception_explicit_signer_type() {
+        // Adding exception with explicit signer_type should use it
+        let (state, _dir) = create_test_state();
+        let response = state
+            .handle(Request::AddException {
+                process_path: None,
+                signer_type: Some("adhoc".to_string()),
+                team_id: None,
+                signing_id: Some("adhoc-app-id".to_string()),
+                file_pattern: "~/.ssh/*".to_string(),
+                is_glob: true,
+                expires_at: None,
+                comment: None,
+            })
+            .await;
+
+        match response {
+            Response::Success { message } => assert!(message.contains("Exception added")),
+            _ => panic!("Expected Success response"),
+        }
+
+        let exceptions = state.storage.get_exceptions().unwrap();
+        assert_eq!(exceptions.len(), 1);
+        assert_eq!(exceptions[0].signer_type, Some(crate::rules::SignerType::Adhoc));
+    }
+
+    #[tokio::test]
+    async fn test_handle_add_exception_invalid_signer_type() {
+        // Invalid signer_type string should return error
+        let (state, _dir) = create_test_state();
+        let response = state
+            .handle(Request::AddException {
+                process_path: None,
+                signer_type: Some("invalid_type".to_string()),
+                team_id: Some("TEAM".to_string()),
+                signing_id: None,
+                file_pattern: "~/.ssh/*".to_string(),
+                is_glob: true,
+                expires_at: None,
+                comment: None,
+            })
+            .await;
+
+        match response {
+            Response::Error { message, .. } => {
+                assert!(message.contains("Invalid signer_type") || message.contains("unknown signer type"))
+            }
+            _ => panic!("Expected Error response"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_handle_add_exception_unsigned_type() {
+        // Adding unsigned exception should work
+        let (state, _dir) = create_test_state();
+        let response = state
+            .handle(Request::AddException {
+                process_path: Some("/usr/local/bin/unsigned-tool".to_string()),
+                signer_type: Some("unsigned".to_string()),
+                team_id: None,
+                signing_id: None,
+                file_pattern: "~/.ssh/*".to_string(),
+                is_glob: true,
+                expires_at: None,
+                comment: None,
+            })
+            .await;
+
+        match response {
+            Response::Success { message } => assert!(message.contains("Exception added")),
+            _ => panic!("Expected Success response"),
+        }
+
+        let exceptions = state.storage.get_exceptions().unwrap();
+        assert_eq!(exceptions.len(), 1);
+        assert_eq!(exceptions[0].signer_type, Some(crate::rules::SignerType::Unsigned));
+    }
+
+    #[tokio::test]
+    async fn test_handle_add_exception_with_process_path_and_signer() {
+        // Both process_path and signer can be specified together
+        let (state, _dir) = create_test_state();
+        let response = state
+            .handle(Request::AddException {
+                process_path: Some("/usr/bin/ssh".to_string()),
+                signer_type: Some("team_id".to_string()),
+                team_id: Some("APPLE".to_string()),
+                signing_id: None,
+                file_pattern: "~/.ssh/*".to_string(),
+                is_glob: true,
+                expires_at: None,
+                comment: Some("Allow Apple ssh".to_string()),
+            })
+            .await;
+
+        match response {
+            Response::Success { message } => assert!(message.contains("Exception added")),
+            _ => panic!("Expected Success response"),
+        }
+
+        let exceptions = state.storage.get_exceptions().unwrap();
+        assert_eq!(exceptions.len(), 1);
+        assert_eq!(exceptions[0].process_path, Some("/usr/bin/ssh".to_string()));
+        assert_eq!(exceptions[0].team_id, Some("APPLE".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_handle_add_exception_empty_file_pattern() {
+        // Empty file_pattern should still be accepted (though not very useful)
+        let (state, _dir) = create_test_state();
+        let response = state
+            .handle(Request::AddException {
+                process_path: Some("/usr/bin/test".to_string()),
+                signer_type: None,
+                team_id: None,
+                signing_id: None,
+                file_pattern: "".to_string(),
+                is_glob: false,
+                expires_at: None,
+                comment: None,
+            })
+            .await;
+
+        // Should succeed - empty pattern won't match anything useful but is valid
+        match response {
+            Response::Success { message } => assert!(message.contains("Exception added")),
+            _ => panic!("Expected Success response"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_handle_add_exception_with_expiration() {
+        let (state, _dir) = create_test_state();
+        let expires = Utc::now() + chrono::Duration::hours(1);
+
+        let response = state
+            .handle(Request::AddException {
+                process_path: Some("/usr/bin/test".to_string()),
+                signer_type: None,
+                team_id: None,
+                signing_id: None,
+                file_pattern: "~/.ssh/*".to_string(),
+                is_glob: true,
+                expires_at: Some(expires),
+                comment: None,
+            })
+            .await;
+
+        match response {
+            Response::Success { message } => assert!(message.contains("Exception added")),
+            _ => panic!("Expected Success response"),
+        }
+
+        let exceptions = state.storage.get_exceptions().unwrap();
+        assert_eq!(exceptions.len(), 1);
+        assert!(exceptions[0].expires_at.is_some());
     }
 }

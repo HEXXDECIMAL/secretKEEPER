@@ -1,3 +1,4 @@
+import SecretKeeperLib
 import SwiftUI
 
 struct ViolationAlertView: View {
@@ -91,6 +92,25 @@ struct ViolationAlertView: View {
                 .padding(10)
                 .background(Color(NSColor.controlBackgroundColor))
                 .cornerRadius(6)
+
+                // Show if already covered by an exception
+                if let matchingException = findMatchingException(exceptions: appState.exceptions, violation: violation) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "checkmark.shield.fill")
+                            .foregroundStyle(.green)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Already covered by an exception")
+                                .fontWeight(.medium)
+                            Text(matchingException.filePattern)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                    }
+                    .padding(10)
+                    .background(Color.green.opacity(0.1))
+                    .cornerRadius(6)
+                }
             }
             .padding()
             .background(Color(NSColor.windowBackgroundColor))

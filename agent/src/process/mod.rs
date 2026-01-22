@@ -4,4 +4,4 @@ pub mod context;
 pub mod tree;
 
 pub use context::{get_home_for_uid, ProcessContext};
-pub use tree::{build_process_tree, ProcessTreeEntry};
+pub use tree::{build_process_tree, is_process_stopped, ProcessTreeEntry};

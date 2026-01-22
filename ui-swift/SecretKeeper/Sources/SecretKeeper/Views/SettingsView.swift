@@ -1,5 +1,6 @@
-import SwiftUI
+import SecretKeeperLib
 import ServiceManagement
+import SwiftUI
 
 struct SettingsView: View {
     @EnvironmentObject var appState: AppState
