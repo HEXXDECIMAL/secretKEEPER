@@ -5,24 +5,19 @@ struct ViolationAlertView: View {
     let violation: ViolationEvent
     @State private var showAddException = false
     @State private var actionTaken = false
-    @Environment(\.dismiss) private var dismiss
 
     private func closeWindow(withAction: Bool = true) {
         if withAction {
             actionTaken = true
         }
-        // Capture window reference before state changes
         let window = NSApp.keyWindow
-        // Clear from pending violations
         appState.clearPendingViolation(violation.id)
-        // Close the window after a brief delay to let SwiftUI finish processing state changes
         DispatchQueue.main.async {
             window?.close()
         }
     }
 
     private func handleDismissWithoutAction() {
-        // If no action was taken, mark as dismissed
         if !actionTaken {
             appState.recordAction(.dismissed, forViolationId: violation.id)
         }
@@ -30,81 +25,97 @@ struct ViolationAlertView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Header
-            HStack {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.title)
-                    .foregroundColor(.orange)
+            // Header - focused on what happened
+            VStack(spacing: 12) {
+                HStack(spacing: 12) {
+                    Image(systemName: "hand.raised.fill")
+                        .font(.system(size: 32))
+                        .foregroundStyle(.orange)
 
-                VStack(alignment: .leading) {
-                    Text("Access Blocked")
-                        .font(.headline)
-                    Text("Protected file access detected")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(violation.processName)
+                            .font(.title2)
+                            .fontWeight(.semibold)
+                        Text("attempted to access a protected file")
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Spacer()
                 }
 
-                Spacer()
-
-                SigningBadge(status: violation.signingStatus)
+                // The key info: what file was accessed
+                HStack {
+                    Image(systemName: "doc.badge.gearshape.fill")
+                        .foregroundStyle(.secondary)
+                    Text(violation.filePath)
+                        .font(.system(.body, design: .monospaced))
+                        .textSelection(.enabled)
+                        .lineLimit(2)
+                        .truncationMode(.middle)
+                    Spacer()
+                }
+                .padding(10)
+                .background(Color(NSColor.controlBackgroundColor))
+                .cornerRadius(6)
             }
             .padding()
             .background(Color(NSColor.windowBackgroundColor))
 
             Divider()
 
+            // Details
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    // File info
-                    InfoSection(title: "Protected File") {
-                        MonoText(violation.filePath)
-                        if let ruleId = violation.ruleId {
-                            Text("Rule: \(ruleId)")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
+                    // Process details - the security-relevant info
+                    GroupBox {
+                        VStack(alignment: .leading, spacing: 10) {
+                            InfoRow(label: "Path", value: violation.processPath)
+                            InfoRow(label: "PID", value: "\(violation.processPid)")
+                            if let ppid = violation.parentPid {
+                                InfoRow(label: "Parent PID", value: "\(ppid)")
+                            }
+                            if let cmdline = violation.processCmdline {
+                                InfoRow(label: "Command", value: cmdline)
+                            }
+                            if let ruleId = violation.ruleId {
+                                InfoRow(label: "Matched Rule", value: ruleId)
+                            }
                         }
+                    } label: {
+                        Label("Process", systemImage: "terminal")
+                            .font(.headline)
                     }
 
-                    // Process info
-                    InfoSection(title: "Accessing Process") {
-                        HStack {
-                            MonoText(violation.processPath)
-                            Spacer()
-                            Text("PID \(violation.processPid)")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                        if let cmdline = violation.processCmdline {
-                            Text("$ \(cmdline)")
-                                .font(.system(.caption, design: .monospaced))
-                                .foregroundColor(.secondary)
-                                .lineLimit(2)
-                        }
-                    }
-
-                    // Signing info
-                    if violation.teamId != nil || violation.signingId != nil {
-                        InfoSection(title: "Code Signing") {
+                    // Code signing - important for trust decisions
+                    GroupBox {
+                        VStack(alignment: .leading, spacing: 10) {
+                            HStack {
+                                Text("Status")
+                                    .frame(width: 80, alignment: .trailing)
+                                    .foregroundStyle(.secondary)
+                                SigningIndicator(status: violation.signingStatus)
+                                Spacer()
+                            }
                             if let teamId = violation.teamId {
-                                HStack {
-                                    Text("Team ID:")
-                                        .foregroundColor(.secondary)
-                                    MonoText(teamId)
-                                }
+                                InfoRow(label: "Team ID", value: teamId)
                             }
                             if let signingId = violation.signingId {
-                                HStack {
-                                    Text("Signing ID:")
-                                        .foregroundColor(.secondary)
-                                    MonoText(signingId)
-                                }
+                                InfoRow(label: "Signing ID", value: signingId)
                             }
                         }
+                    } label: {
+                        Label("Code Signing", systemImage: "signature")
+                            .font(.headline)
                     }
 
-                    // Process tree
-                    InfoSection(title: "Process Tree") {
-                        ProcessTreeView(entries: violation.processTree)
+                    // Process tree - compact version
+                    if !violation.processTree.isEmpty {
+                        GroupBox {
+                            ProcessTreeView(entries: violation.processTree)
+                        } label: {
+                            Label("Process Tree", systemImage: "arrow.triangle.branch")
+                                .font(.headline)
+                        }
                     }
                 }
                 .padding()
@@ -112,58 +123,46 @@ struct ViolationAlertView: View {
 
             Divider()
 
-            // Action buttons
+            // Actions - clear and unambiguous
             HStack(spacing: 12) {
-                // Kill - terminates the stopped process
-                Button {
-                    if let appDelegate = AppDelegate.shared {
-                        appDelegate.handleKillProcess(eventId: violation.id)
-                    }
+                Button(role: .destructive) {
+                    AppDelegate.shared?.handleKillProcess(eventId: violation.id)
                     closeWindow(withAction: true)
                 } label: {
-                    Label("Kill", systemImage: "xmark.circle.fill")
+                    Text("Terminate")
+                        .frame(minWidth: 70)
                 }
-                .buttonStyle(.bordered)
-                .tint(.red)
-                .help("Terminate the stopped process")
+                .help("Kill the stopped process")
 
-                // Resume - allows the process to continue (one-time)
                 Button {
-                    if let appDelegate = AppDelegate.shared {
-                        appDelegate.handleAllowOnce(eventId: violation.id)
-                    }
+                    AppDelegate.shared?.handleAllowOnce(eventId: violation.id)
                     closeWindow(withAction: true)
                 } label: {
-                    Label("Resume", systemImage: "play.circle.fill")
+                    Text("Allow Once")
+                        .frame(minWidth: 70)
                 }
-                .buttonStyle(.bordered)
-                .tint(.orange)
-                .help("Allow this process to continue (one-time)")
+                .help("Resume the process (one-time)")
 
                 Spacer()
 
                 Button("Add Exception...") {
                     showAddException = true
                 }
-                .buttonStyle(.bordered)
-                .help("Create an exception rule for future access")
 
-                // OK - acknowledge and allow permanently
                 Button {
-                    if let appDelegate = AppDelegate.shared {
-                        appDelegate.handleAllowPermanently(eventId: violation.id)
-                    }
+                    AppDelegate.shared?.handleAllowPermanently(eventId: violation.id)
                     closeWindow(withAction: true)
                 } label: {
-                    Label("OK", systemImage: "checkmark.circle.fill")
+                    Text("Allow Always")
+                        .frame(minWidth: 80)
                 }
                 .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.defaultAction)
-                .help("Allow this process and add a permanent exception")
+                .help("Allow and add permanent exception")
             }
             .padding()
         }
-        .frame(minWidth: 550, minHeight: 450)
+        .frame(width: 680, height: 620)
         .sheet(isPresented: $showAddException) {
             AddExceptionSheet(violation: violation)
         }
@@ -173,32 +172,45 @@ struct ViolationAlertView: View {
     }
 }
 
-struct InfoSection<Content: View>: View {
-    let title: String
-    @ViewBuilder let content: Content
+// MARK: - Supporting Views
+
+struct InfoRow: View {
+    let label: String
+    let value: String
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(title)
-                .font(.headline)
-                .foregroundColor(.secondary)
-
-            content
+        HStack(alignment: .top) {
+            Text(label)
+                .frame(width: 80, alignment: .trailing)
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.system(.body, design: .monospaced))
+                .textSelection(.enabled)
+                .lineLimit(2)
+            Spacer()
         }
     }
 }
 
-struct MonoText: View {
-    let text: String
-
-    init(_ text: String) {
-        self.text = text
-    }
+struct SigningIndicator: View {
+    let status: SigningStatus
 
     var body: some View {
-        Text(text)
-            .font(.system(.body, design: .monospaced))
-            .textSelection(.enabled)
+        HStack(spacing: 6) {
+            Circle()
+                .fill(color)
+                .frame(width: 8, height: 8)
+            Text(status.label)
+                .fontWeight(.medium)
+        }
+    }
+
+    private var color: Color {
+        switch status {
+        case .platform: return .blue
+        case .signed: return .green
+        case .unsigned: return .red
+        }
     }
 }
 
@@ -209,25 +221,27 @@ struct SigningBadge: View {
         HStack(spacing: 4) {
             Circle()
                 .fill(color)
-                .frame(width: 8, height: 8)
+                .frame(width: 6, height: 6)
             Text(status.label)
-                .font(.caption)
+                .font(.caption2)
                 .fontWeight(.medium)
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(color.opacity(0.2))
+        .padding(.horizontal, 6)
+        .padding(.vertical, 3)
+        .background(color.opacity(0.15))
         .cornerRadius(4)
     }
 
     private var color: Color {
         switch status {
         case .platform: return .blue
-        case .signed: return .purple
+        case .signed: return .green
         case .unsigned: return .red
         }
     }
 }
+
+// MARK: - Add Exception Sheet
 
 struct AddExceptionSheet: View {
     @Environment(\.dismiss) private var dismiss
@@ -235,23 +249,30 @@ struct AddExceptionSheet: View {
 
     @State private var exceptionType: ExceptionType = .process
     @State private var filePattern: String = ""
-    @State private var isGlob = true
     @State private var isPermanent = true
     @State private var expirationHours = 24
-    @State private var comment = ""
 
     enum ExceptionType: String, CaseIterable {
-        case process = "Process Path"
+        case process = "Process"
         case signer = "Code Signer"
     }
 
     var body: some View {
-        VStack(spacing: 16) {
-            Text("Add Exception")
-                .font(.headline)
+        VStack(spacing: 0) {
+            // Header
+            VStack(spacing: 4) {
+                Text("Add Exception")
+                    .font(.headline)
+                Text("Allow this process to access matching files")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+            .padding()
+
+            Divider()
 
             Form {
-                Picker("Exception Type", selection: $exceptionType) {
+                Picker("Match by", selection: $exceptionType) {
                     ForEach(ExceptionType.allCases, id: \.self) { type in
                         Text(type.rawValue).tag(type)
                     }
@@ -259,9 +280,11 @@ struct AddExceptionSheet: View {
                 .pickerStyle(.segmented)
 
                 if exceptionType == .process {
-                    LabeledContent("Process") {
+                    LabeledContent("Process Path") {
                         Text(violation.processPath)
                             .font(.system(.body, design: .monospaced))
+                            .lineLimit(1)
+                            .truncationMode(.middle)
                     }
                 } else {
                     LabeledContent("Code Signer") {
@@ -273,22 +296,19 @@ struct AddExceptionSheet: View {
                 TextField("File Pattern", text: $filePattern)
                     .font(.system(.body, design: .monospaced))
                     .onAppear {
-                        // Default to directory pattern
                         let dir = (violation.filePath as NSString).deletingLastPathComponent
                         filePattern = "\(dir)/*"
                     }
 
-                Toggle("Glob Pattern", isOn: $isGlob)
-
-                Toggle("Permanent", isOn: $isPermanent)
+                Toggle("Permanent exception", isOn: $isPermanent)
 
                 if !isPermanent {
                     Stepper("Expires in \(expirationHours) hours", value: $expirationHours, in: 1...168)
                 }
-
-                TextField("Comment (optional)", text: $comment)
             }
-            .padding()
+            .formStyle(.grouped)
+
+            Divider()
 
             HStack {
                 Button("Cancel") {
@@ -307,25 +327,16 @@ struct AddExceptionSheet: View {
             }
             .padding()
         }
-        .frame(width: 450)
+        .frame(width: 420)
     }
 
     private var codeSignerDescription: String {
-        // For Apple platform binaries, show a friendly description
         if let signingId = violation.signingId {
-            if signingId.hasPrefix("com.apple.") {
-                if let teamId = violation.teamId, !teamId.isEmpty {
-                    return "\(signingId) (Apple)"
-                }
-                return "\(signingId) (Apple)"
-            }
-            // For third-party signed apps
             if let teamId = violation.teamId, !teamId.isEmpty {
-                return "\(signingId) (\(teamId))"
+                return "\(teamId) (\(signingId))"
             }
             return signingId
         }
-        // Fall back to team ID if no signing ID
         if let teamId = violation.teamId, !teamId.isEmpty {
             return teamId
         }
@@ -334,8 +345,6 @@ struct AddExceptionSheet: View {
 
     private func addException() {
         let expiresAt: Date? = isPermanent ? nil : Date().addingTimeInterval(TimeInterval(expirationHours * 3600))
-
-        // Determine process path or code signer based on exception type
         let processPath: String? = exceptionType == .process ? violation.processPath : nil
         let codeSigner: String? = exceptionType == .signer ? (violation.teamId ?? violation.signingId) : nil
 
@@ -343,15 +352,13 @@ struct AddExceptionSheet: View {
             processPath: processPath,
             codeSigner: codeSigner,
             filePattern: filePattern,
-            isGlob: isGlob,
+            isGlob: filePattern.contains("*"),
             expiresAt: expiresAt,
-            comment: comment.isEmpty ? nil : comment
+            comment: nil
         )
 
-        // Refresh exceptions list
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
             AppDelegate.shared?.ipcClient?.getExceptions()
         }
     }
 }
-

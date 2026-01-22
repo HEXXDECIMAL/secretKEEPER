@@ -1,7 +1,6 @@
 import SwiftUI
 
-/// EDR-style process tree visualization.
-/// Shows full chain from violating process to init/launchd.
+/// Compact process tree visualization for security analysis.
 struct ProcessTreeView: View {
     let entries: [ProcessTreeEntry]
 
@@ -9,15 +8,12 @@ struct ProcessTreeView: View {
         if entries.isEmpty {
             HStack {
                 Image(systemName: "questionmark.circle")
-                    .foregroundColor(.secondary)
+                    .foregroundStyle(.secondary)
                 Text("Process tree not available")
                     .font(.caption)
-                    .foregroundColor(.secondary)
+                    .foregroundStyle(.secondary)
             }
-            .padding()
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color(NSColor.textBackgroundColor))
-            .cornerRadius(4)
+            .padding(.vertical, 8)
         } else {
             VStack(alignment: .leading, spacing: 0) {
                 ForEach(Array(entries.enumerated()), id: \.offset) { index, entry in
@@ -28,8 +24,6 @@ struct ProcessTreeView: View {
                     )
                 }
             }
-            .background(Color(NSColor.textBackgroundColor))
-            .cornerRadius(4)
         }
     }
 }
@@ -40,151 +34,103 @@ struct ProcessTreeRow: View {
     let isLast: Bool
 
     var body: some View {
-        let cachedState = entry.currentState  // Single syscall per render
-        return HStack(spacing: 0) {
-            // Tree lines
-            ForEach(0..<depth, id: \.self) { level in
-                HStack(spacing: 0) {
-                    Rectangle()
-                        .fill(Color.secondary.opacity(0.3))
-                        .frame(width: 1)
-                    Spacer()
-                }
-                .frame(width: 20)
-            }
-
-            // Connector
+        let state = entry.currentState
+        HStack(spacing: 0) {
+            // Compact tree indent (12px per level)
             if depth > 0 {
                 HStack(spacing: 0) {
-                    VStack(spacing: 0) {
+                    ForEach(0..<depth, id: \.self) { _ in
                         Rectangle()
-                            .fill(Color.secondary.opacity(0.3))
+                            .fill(Color.secondary.opacity(0.2))
                             .frame(width: 1)
-                        if isLast {
-                            Spacer()
-                        }
+                            .padding(.leading, 11)
                     }
+                    // Connector line
                     Rectangle()
                         .fill(Color.secondary.opacity(0.3))
-                        .frame(height: 1)
+                        .frame(width: 8, height: 1)
                 }
-                .frame(width: 20, height: 24)
+                .frame(width: CGFloat(depth * 12) + 8)
             }
 
-            // Process info
-            HStack(spacing: 8) {
-                // Signing indicator
-                Circle()
-                    .fill(signingColor)
-                    .frame(width: 8, height: 8)
+            // Process info row
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    // State indicator
+                    Circle()
+                        .fill(stateColor(state))
+                        .frame(width: 6, height: 6)
 
-                // Process name and path
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 6) {
-                        // State icon prefix
-                        Text(cachedState.icon)
-                            .font(.system(.caption))
+                    // Process name (allow wrapping)
+                    Text(entry.name)
+                        .font(.system(.callout, design: .monospaced))
+                        .fontWeight(depth == 0 ? .semibold : .regular)
+                        .fixedSize(horizontal: false, vertical: true)
 
-                        Text(entry.name)
-                            .font(.system(.body, design: .monospaced))
-                            .fontWeight(.medium)
-
-                        Text("PID \(entry.pid)")
-                            .font(.system(.caption, design: .monospaced))
-                            .foregroundColor(.secondary)
-                            .padding(.horizontal, 4)
-                            .padding(.vertical, 1)
-                            .background(Color.secondary.opacity(0.1))
-                            .cornerRadius(3)
-
-                        if let ppid = entry.ppid {
-                            Text("PPID \(ppid)")
-                                .font(.system(.caption, design: .monospaced))
-                                .foregroundColor(.secondary)
-                        }
-
-                        // State badge for non-running processes
-                        if cachedState != .running {
-                            Text(cachedState.label.uppercased())
-                                .font(.system(.caption2, design: .monospaced))
-                                .fontWeight(.bold)
-                                .foregroundColor(cachedState == .stopped ? .red : .secondary)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(cachedState == .stopped ? Color.red.opacity(0.15) : Color.secondary.opacity(0.15))
-                                .cornerRadius(4)
-                        }
-                    }
-
-                    Text(entry.path)
+                    // PID (no comma formatting)
+                    Text(String(entry.pid))
                         .font(.system(.caption, design: .monospaced))
-                        .foregroundColor(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
+                        .foregroundStyle(.secondary)
 
-                    // Additional info row
-                    HStack(spacing: 8) {
-                        if let euid = entry.euid {
-                            Label("UID \(euid)", systemImage: "person")
-                                .font(.system(.caption2, design: .monospaced))
-                                .foregroundColor(.secondary)
-                        }
-
-                        if let cwd = entry.cwd {
-                            Label(cwd, systemImage: "folder")
-                                .font(.system(.caption2, design: .monospaced))
-                                .foregroundColor(.secondary)
-                                .lineLimit(1)
-                        }
-
-                        // Code signing info - combined for readability
-                        Label(signingDescription, systemImage: "signature")
-                            .font(.system(.caption2, design: .monospaced))
-                            .foregroundColor(.secondary)
-                            .lineLimit(1)
+                    // Stopped badge
+                    if state == .stopped {
+                        Text("STOPPED")
+                            .font(.system(.caption2, design: .rounded))
+                            .fontWeight(.bold)
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(Color.red)
+                            .cornerRadius(3)
                     }
+
+                    Spacer()
                 }
 
-                Spacer()
-
-                // Signing badge
-                SigningBadge(status: entry.signingStatus)
+                // Signer info line
+                Text(signerDescription)
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.leading, 12)  // Align with process name
             }
-            .padding(.vertical, 6)
+            .padding(.vertical, 5)
             .padding(.horizontal, 8)
-        }
-        .background(
-            depth == 0
-                ? (cachedState == .stopped ? Color.red.opacity(0.1) : Color.orange.opacity(0.1))
-                : (cachedState == .stopped ? Color.red.opacity(0.05) : Color.clear)
-        )
-    }
-
-    private var signingColor: Color {
-        switch entry.signingStatus {
-        case .platform: return .blue
-        case .signed: return .purple
-        case .unsigned: return .red
+            .background(rowBackground(state))
         }
     }
 
-    private var signingDescription: String {
-        // For Apple platform binaries, show a friendly description
-        if let signingId = entry.signingId {
-            if signingId.hasPrefix("com.apple.") || entry.isPlatformBinary == true {
+    private var signerDescription: String {
+        if entry.isPlatformBinary {
+            if let signingId = entry.signingId {
                 return "\(signingId) (Apple)"
             }
-            // For third-party signed apps
-            if let teamId = entry.teamId, !teamId.isEmpty {
+            return "Apple Platform Binary"
+        }
+        if let teamId = entry.teamId {
+            if let signingId = entry.signingId {
                 return "\(signingId) (\(teamId))"
             }
-            return signingId
+            return "Team: \(teamId)"
         }
-        // Fall back to team ID if no signing ID
-        if let teamId = entry.teamId, !teamId.isEmpty {
-            return teamId
+        if let signingId = entry.signingId {
+            return signingId
         }
         return "Unsigned"
     }
-}
 
+    private func stateColor(_ state: ProcessState) -> Color {
+        switch state {
+        case .running: return .green
+        case .stopped: return .red
+        case .dead: return .secondary
+        }
+    }
+
+    private func rowBackground(_ state: ProcessState) -> Color {
+        if depth == 0 {
+            return state == .stopped ? Color.red.opacity(0.1) : Color.orange.opacity(0.08)
+        }
+        return state == .stopped ? Color.red.opacity(0.05) : Color.clear
+    }
+}
