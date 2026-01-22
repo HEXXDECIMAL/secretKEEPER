@@ -229,8 +229,9 @@ struct InfoRow: View {
     var body: some View {
         HStack(alignment: .top) {
             Text(label)
-                .frame(width: 80, alignment: .trailing)
+                .frame(width: 90, alignment: .trailing)
                 .foregroundStyle(.secondary)
+                .lineLimit(1)
             Text(value)
                 .font(.system(.body, design: .monospaced))
                 .textSelection(.enabled)
@@ -257,6 +258,7 @@ struct SigningIndicator: View {
         switch status {
         case .platform: return .blue
         case .signed: return .green
+        case .adhoc: return .orange
         case .unsigned: return .red
         }
     }
@@ -284,6 +286,7 @@ struct SigningBadge: View {
         switch status {
         case .platform: return .blue
         case .signed: return .green
+        case .adhoc: return .orange
         case .unsigned: return .red
         }
     }

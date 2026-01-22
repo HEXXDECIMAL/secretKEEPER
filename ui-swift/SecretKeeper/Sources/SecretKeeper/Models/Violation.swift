@@ -97,14 +97,20 @@ struct ViolationEvent: Codable, Identifiable, Hashable {
 
     /// Signing status for UI display.
     var signingStatus: SigningStatus {
-        if teamId == nil && signingId == nil {
-            return .unsigned
-        }
-        // Check for Apple platform binaries
+        // Check for Apple platform binaries first
         if let entry = processTree.first, entry.isPlatformBinary {
             return .platform
         }
-        return .signed
+        // No signing info at all
+        if teamId == nil && signingId == nil {
+            return .unsigned
+        }
+        // Has team ID = properly signed by identified developer
+        if teamId != nil {
+            return .signed
+        }
+        // Has signingId but no teamId = ad-hoc/self-signed
+        return .adhoc
     }
 }
 
@@ -162,10 +168,16 @@ struct ProcessTreeEntry: Codable, Identifiable, Hashable {
         if isPlatformBinary {
             return .platform
         }
-        if teamId != nil || signingId != nil {
+        // No signing info at all
+        if teamId == nil && signingId == nil {
+            return .unsigned
+        }
+        // Has team ID = properly signed
+        if teamId != nil {
             return .signed
         }
-        return .unsigned
+        // Has signingId but no teamId = ad-hoc/self-signed
+        return .adhoc
     }
 
     /// Current state of this process (live check).
@@ -177,13 +189,15 @@ struct ProcessTreeEntry: Codable, Identifiable, Hashable {
 /// Code signing status for color coding.
 enum SigningStatus {
     case platform  // Apple/system binary (blue)
-    case signed    // Third-party signed (purple)
-    case unsigned  // No signature (red)
+    case signed    // Third-party signed with valid team ID (green)
+    case adhoc     // Ad-hoc/self-signed - has signingId but no teamId (orange)
+    case unsigned  // No signature at all (red)
 
     var color: String {
         switch self {
         case .platform: return "systemBlue"
-        case .signed: return "systemPurple"
+        case .signed: return "systemGreen"
+        case .adhoc: return "systemOrange"
         case .unsigned: return "systemRed"
         }
     }
@@ -192,6 +206,7 @@ enum SigningStatus {
         switch self {
         case .platform: return "Platform"
         case .signed: return "Signed"
+        case .adhoc: return "Ad-hoc"
         case .unsigned: return "Unsigned"
         }
     }

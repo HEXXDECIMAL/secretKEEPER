@@ -100,6 +100,12 @@ fn get_process_info(pid: u32) -> Option<ProcessTreeEntry> {
     // Get full path
     let path = get_process_path_macos(pid).unwrap_or_else(|| PathBuf::from(&name));
 
+    // Derive name from full path (not truncated comm which is limited to 16 chars)
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or(name);
+
     // Get signing info
     let (team_id, signing_id, is_platform) = get_signing_info_macos(&path);
 

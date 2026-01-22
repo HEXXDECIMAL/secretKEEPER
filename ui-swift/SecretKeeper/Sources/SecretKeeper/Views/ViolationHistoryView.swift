@@ -128,7 +128,8 @@ struct ViolationHistoryView: View {
     private func signingColor(for violation: ViolationEvent) -> Color {
         switch violation.signingStatus {
         case .platform: return .blue
-        case .signed: return .purple
+        case .signed: return .green
+        case .adhoc: return .orange
         case .unsigned: return .red
         }
     }
@@ -365,7 +366,8 @@ struct HistoryDetailView: View {
     private var signingColor: Color {
         switch entry.violation.signingStatus {
         case .platform: return .blue
-        case .signed: return .purple
+        case .signed: return .green
+        case .adhoc: return .orange
         case .unsigned: return .red
         }
     }
