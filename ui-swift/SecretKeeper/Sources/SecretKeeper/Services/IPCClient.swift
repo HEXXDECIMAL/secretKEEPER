@@ -214,7 +214,31 @@ class IPCClient: NSObject {
         send(GetExceptionsRequest())
     }
 
-    /// Add a new exception.
+    /// Add a new exception with explicit signer fields.
+    func addException(
+        processPath: String? = nil,
+        signerType: String? = nil,
+        teamId: String? = nil,
+        signingId: String? = nil,
+        filePattern: String,
+        isGlob: Bool = true,
+        expiresAt: Date? = nil,
+        comment: String? = nil
+    ) {
+        fputs("[IPCClient.addException] processPath=\(processPath ?? "nil") signerType=\(signerType ?? "nil") teamId=\(teamId ?? "nil") signingId=\(signingId ?? "nil") pattern=\(filePattern)\n", stderr)
+        send(AddExceptionRequest(
+            processPath: processPath,
+            signerType: signerType,
+            teamId: teamId,
+            signingId: signingId,
+            filePattern: filePattern,
+            isGlob: isGlob,
+            expiresAt: expiresAt,
+            comment: comment
+        ))
+    }
+
+    /// Add a new exception (backward compatible with codeSigner string).
     func addException(
         processPath: String? = nil,
         codeSigner: String? = nil,
@@ -240,7 +264,7 @@ class IPCClient: NSObject {
             }
         }
 
-        send(AddExceptionRequest(
+        addException(
             processPath: processPath,
             signerType: signerType,
             teamId: teamId,
@@ -249,7 +273,7 @@ class IPCClient: NSObject {
             isGlob: isGlob,
             expiresAt: expiresAt,
             comment: comment
-        ))
+        )
     }
 
     /// Remove an exception by ID.

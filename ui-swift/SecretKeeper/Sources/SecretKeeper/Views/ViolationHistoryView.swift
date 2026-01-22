@@ -121,6 +121,14 @@ struct ViolationHistoryView: View {
             }
         }
         .frame(minWidth: 900, minHeight: 500)
+        .onAppear {
+            // If opened from menubar with a specific entry selected, use that
+            if let entryId = appState.selectedHistoryEntryId {
+                selectedEntryId = entryId
+                // Clear it so subsequent opens don't reselect
+                appState.selectedHistoryEntryId = nil
+            }
+        }
     }
 
     private func formatTime(_ date: Date) -> String {
@@ -277,6 +285,12 @@ struct HistoryDetailView: View {
     @EnvironmentObject var appState: AppState
     let entry: HistoryEntry
     @State private var showAddException = false
+
+    /// Find a matching exception for this violation.
+    /// Using a computed property ensures SwiftUI tracks appState.exceptions changes.
+    private var matchingException: Exception? {
+        findMatchingException(exceptions: appState.exceptions, violation: entry.violation)
+    }
 
     var body: some View {
         ScrollView {
@@ -448,7 +462,7 @@ struct HistoryDetailView: View {
 
     @ViewBuilder
     private var exceptionCoverageSection: some View {
-        if let matchingException = findMatchingException(exceptions: appState.exceptions, violation: entry.violation) {
+        if let exception = matchingException {
             // Covered by an exception
             DetailSection(title: "Exception Coverage") {
                 HStack(spacing: 8) {
@@ -458,16 +472,16 @@ struct HistoryDetailView: View {
                         .fontWeight(.medium)
                         .foregroundStyle(.green)
                 }
-                DetailRow(label: "Pattern", value: matchingException.filePattern)
-                if let processPath = matchingException.processPath {
+                DetailRow(label: "Pattern", value: exception.filePattern)
+                if let processPath = exception.processPath {
                     DetailRow(label: "Process", value: processPath)
                 }
-                if let signerDesc = matchingException.signerDescription {
+                if let signerDesc = exception.signerDescription {
                     DetailRow(label: "Signer", value: signerDesc)
                 }
-                if matchingException.isPermanent {
+                if exception.isPermanent {
                     DetailRow(label: "Duration", value: "Permanent")
-                } else if let remaining = matchingException.timeRemaining {
+                } else if let remaining = exception.timeRemaining {
                     DetailRow(label: "Expires", value: remaining)
                 }
             }

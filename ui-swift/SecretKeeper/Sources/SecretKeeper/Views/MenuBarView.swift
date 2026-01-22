@@ -38,6 +38,10 @@ struct MenuBarView: View {
         }
         .padding(12)
         .frame(width: 280)
+        .onDisappear {
+            // Reset expanded state when popover closes to avoid stale view state
+            historyExpanded = false
+        }
     }
 
     // MARK: - Sections
@@ -270,7 +274,8 @@ struct MenuBarView: View {
                             .padding(.leading, 32)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     } else {
-                        ForEach(appState.violationHistory.prefix(10)) { entry in
+                        // Use Array() to avoid ArraySlice issues with ForEach
+                        ForEach(Array(appState.violationHistory.prefix(10))) { entry in
                             HistoryEntryRow(entry: entry)
                         }
 
@@ -292,7 +297,7 @@ struct MenuBarView: View {
                     }
                 }
                 .padding(.leading, 8)
-                .transition(.opacity.combined(with: .move(edge: .top)))
+                // Removed transition animation - can cause crashes during rapid popover open/close
             }
         }
     }
@@ -411,7 +416,6 @@ struct HistoryEntryRow: View {
 
     var body: some View {
         Button {
-            fputs("[HistoryEntryRow] Button tapped!\n", stderr)
             openViolationDetail()
         } label: {
             HStack(spacing: 8) {
@@ -469,16 +473,19 @@ struct HistoryEntryRow: View {
     }
 
     private func openViolationDetail() {
-        // Capture violation before any view changes
-        let violation = entry.violation
+        // Capture ALL data before any view changes - this is the critical step
+        let violationCopy = entry.violation
 
-        // Close popover first
-        AppDelegate.shared?.popover.performClose(nil)
+        // Escape button context completely before doing anything else
+        DispatchQueue.main.async {
+            // Open the detail window FIRST, before closing popover
+            // This way the new window is set up before we tear down the popover
+            AppDelegate.shared?.showExistingViolationAlert(violationCopy)
 
-        // Wait for popover to fully close before opening window
-        // This prevents use-after-free when views are deallocated
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            AppDelegate.shared?.showExistingViolationAlert(violation)
+            // Close popover AFTER window is open, with delay for safety
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                AppDelegate.shared?.popover.performClose(nil)
+            }
         }
     }
 }

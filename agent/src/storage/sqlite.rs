@@ -54,6 +54,7 @@ impl Storage {
     fn initialize(&self) -> Result<()> {
         let conn = self.lock();
 
+        // Create tables first (without indexes that depend on new columns)
         conn.execute_batch(
             r#"
             CREATE TABLE IF NOT EXISTS violations (
@@ -80,29 +81,58 @@ impl Storage {
             CREATE TABLE IF NOT EXISTS exceptions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 process_path TEXT,
-                signer_type TEXT,
-                team_id TEXT,
-                signing_id TEXT,
                 file_pattern TEXT NOT NULL,
                 is_glob INTEGER DEFAULT 0,
                 expires_at TEXT,
                 added_by TEXT NOT NULL,
                 comment TEXT,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                CONSTRAINT chk_identifier CHECK (
-                    process_path IS NOT NULL OR signer_type IS NOT NULL
-                )
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
             );
 
             CREATE INDEX IF NOT EXISTS idx_exceptions_process ON exceptions(process_path);
-            CREATE INDEX IF NOT EXISTS idx_exceptions_team_id ON exceptions(team_id);
-            CREATE INDEX IF NOT EXISTS idx_exceptions_signing_id ON exceptions(signing_id);
 
             CREATE TABLE IF NOT EXISTS agent_state (
                 key TEXT PRIMARY KEY,
                 value TEXT,
                 updated_at TEXT DEFAULT CURRENT_TIMESTAMP
             );
+            "#,
+        )?;
+
+        // Run migrations for existing databases
+        self.migrate(&conn)?;
+
+        Ok(())
+    }
+
+    /// Run schema migrations for existing databases.
+    fn migrate(&self, conn: &Connection) -> Result<()> {
+        // Check if exceptions table has the new columns
+        let has_signer_type: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('exceptions') WHERE name = 'signer_type'",
+                [],
+                |row| row.get::<_, i32>(0),
+            )
+            .map(|count| count > 0)
+            .unwrap_or(false);
+
+        if !has_signer_type {
+            tracing::info!("Migrating exceptions table: adding signer columns");
+            conn.execute_batch(
+                r#"
+                ALTER TABLE exceptions ADD COLUMN signer_type TEXT;
+                ALTER TABLE exceptions ADD COLUMN team_id TEXT;
+                ALTER TABLE exceptions ADD COLUMN signing_id TEXT;
+                "#,
+            )?;
+        }
+
+        // Now safe to create indexes on the new columns
+        conn.execute_batch(
+            r#"
+            CREATE INDEX IF NOT EXISTS idx_exceptions_team_id ON exceptions(team_id);
+            CREATE INDEX IF NOT EXISTS idx_exceptions_signing_id ON exceptions(signing_id);
             "#,
         )?;
 

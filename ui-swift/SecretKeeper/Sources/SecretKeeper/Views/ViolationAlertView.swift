@@ -13,6 +13,14 @@ struct ViolationAlertView: View {
         appState.pendingViolations.contains { $0.id == violation.id }
     }
 
+    /// Find a matching exception for this violation.
+    /// Using a computed property ensures SwiftUI tracks appState.exceptions changes.
+    private var matchingException: Exception? {
+        let result = findMatchingException(exceptions: appState.exceptions, violation: violation)
+        fputs("[ViolationAlertView] matchingException computed: \(appState.exceptions.count) exceptions, match=\(result?.filePattern ?? "nil")\n", stderr)
+        return result
+    }
+
     /// Perform an action safely by deferring everything to avoid use-after-free crashes.
     /// The action closure receives the violation ID.
     private func performAction(_ action: @escaping (String) -> Void) {
@@ -93,15 +101,15 @@ struct ViolationAlertView: View {
                 .background(Color(NSColor.controlBackgroundColor))
                 .cornerRadius(6)
 
-                // Show if already covered by an exception
-                if let matchingException = findMatchingException(exceptions: appState.exceptions, violation: violation) {
+                // Show exception coverage status (uses computed property for proper SwiftUI updates)
+                if let exception = matchingException {
                     HStack(spacing: 8) {
                         Image(systemName: "checkmark.shield.fill")
                             .foregroundStyle(.green)
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("Already covered by an exception")
+                            Text("Covered by existing exception")
                                 .fontWeight(.medium)
-                            Text(matchingException.filePattern)
+                            Text(exception.filePattern)
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -109,6 +117,17 @@ struct ViolationAlertView: View {
                     }
                     .padding(10)
                     .background(Color.green.opacity(0.1))
+                    .cornerRadius(6)
+                } else {
+                    HStack(spacing: 8) {
+                        Image(systemName: "exclamationmark.shield.fill")
+                            .foregroundStyle(.orange)
+                        Text("Not covered by any exception")
+                            .fontWeight(.medium)
+                        Spacer()
+                    }
+                    .padding(10)
+                    .background(Color.orange.opacity(0.1))
                     .cornerRadius(6)
                 }
             }
@@ -222,8 +241,22 @@ struct ViolationAlertView: View {
 
                     Spacer()
 
+                    Button("Add Exception...") {
+                        showAddException = true
+                    }
+
                     Button("Close") {
-                        NSApp.keyWindow?.close()
+                        fputs("[ViolationAlertView] Close button tapped, keyWindow=\(NSApp.keyWindow?.title ?? "nil"), mainWindow=\(NSApp.mainWindow?.title ?? "nil")\n", stderr)
+                        // Try keyWindow first, then mainWindow, then find by title
+                        if let window = NSApp.keyWindow {
+                            fputs("[ViolationAlertView] Closing keyWindow: \(window.title)\n", stderr)
+                            window.close()
+                        } else if let window = NSApp.windows.first(where: { $0.title.contains("Violation") }) {
+                            fputs("[ViolationAlertView] Closing window by title: \(window.title)\n", stderr)
+                            window.close()
+                        } else {
+                            fputs("[ViolationAlertView] No window found to close!\n", stderr)
+                        }
                     }
                     .keyboardShortcut(.defaultAction)
                 }
@@ -393,9 +426,26 @@ struct AddExceptionSheet: View {
                     // Capture all needed values before dismiss
                     let expiresAt: Date? = isPermanent ? nil : Date().addingTimeInterval(TimeInterval(expirationHours * 3600))
                     let processPath: String? = exceptionType == .process ? violation.processPath : nil
-                    let codeSigner: String? = exceptionType == .signer ? (violation.teamId ?? violation.signingId) : nil
                     let pattern = filePattern
                     let isGlob = filePattern.contains("*")
+
+                    // Determine signer type and values based on what the violation has
+                    var signerType: String? = nil
+                    var teamId: String? = nil
+                    var signingId: String? = nil
+
+                    if exceptionType == .signer {
+                        // Prefer team_id if available (more reliable), otherwise signing_id
+                        if let team = violation.teamId, !team.isEmpty {
+                            signerType = "team_id"
+                            teamId = team
+                        } else if let signing = violation.signingId, !signing.isEmpty {
+                            signerType = "signing_id"
+                            signingId = signing
+                        }
+                    }
+
+                    fputs("[AddExceptionSheet] Adding exception: processPath=\(processPath ?? "nil") signerType=\(signerType ?? "nil") teamId=\(teamId ?? "nil") signingId=\(signingId ?? "nil") pattern=\(pattern)\n", stderr)
 
                     // Dismiss first, then do work in next run loop
                     dismiss()
@@ -403,7 +453,9 @@ struct AddExceptionSheet: View {
                     DispatchQueue.main.async {
                         AppDelegate.shared?.ipcClient?.addException(
                             processPath: processPath,
-                            codeSigner: codeSigner,
+                            signerType: signerType,
+                            teamId: teamId,
+                            signingId: signingId,
                             filePattern: pattern,
                             isGlob: isGlob,
                             expiresAt: expiresAt,

@@ -15,6 +15,9 @@ class AppState: ObservableObject {
     @Published var totalViolations: Int = 0
     @Published var mode: EnforcementMode = .block
 
+    /// Entry ID to select when opening the history window (set by menubar clicks).
+    @Published var selectedHistoryEntryId: String?
+
     /// Maximum history entries to retain.
     private let maxHistoryEntries = 500
 
