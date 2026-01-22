@@ -279,7 +279,13 @@ mod tests {
         // is_adhoc=false for all these tests
         assert!(exception.matches("/usr/local/bin/mytool", None, None, false, "~/.ssh/id_rsa"));
         assert!(!exception.matches("/usr/bin/cat", None, None, false, "~/.ssh/id_rsa"));
-        assert!(!exception.matches("/usr/local/bin/mytool", None, None, false, "~/.aws/credentials"));
+        assert!(!exception.matches(
+            "/usr/local/bin/mytool",
+            None,
+            None,
+            false,
+            "~/.aws/credentials"
+        ));
     }
 
     #[test]
@@ -303,7 +309,13 @@ mod tests {
         // Wrong team_id
         assert!(!exception.matches("/any/path", Some("WRONGID"), None, false, "~/.ssh/id_rsa"));
         // No team_id provided
-        assert!(!exception.matches("/any/path", None, Some("com.example.app"), false, "~/.ssh/id_rsa"));
+        assert!(!exception.matches(
+            "/any/path",
+            None,
+            Some("com.example.app"),
+            false,
+            "~/.ssh/id_rsa"
+        ));
         // No identifiers at all
         assert!(!exception.matches("/any/path", None, None, false, "~/.ssh/id_rsa"));
     }
@@ -326,11 +338,29 @@ mod tests {
         };
 
         // Matching signing_id (platform binary case)
-        assert!(exception.matches("/any/path", None, Some("com.apple.bluetoothd"), false, "/Library/Keychains/foo"));
+        assert!(exception.matches(
+            "/any/path",
+            None,
+            Some("com.apple.bluetoothd"),
+            false,
+            "/Library/Keychains/foo"
+        ));
         // Wrong signing_id
-        assert!(!exception.matches("/any/path", None, Some("com.apple.other"), false, "/Library/Keychains/foo"));
+        assert!(!exception.matches(
+            "/any/path",
+            None,
+            Some("com.apple.other"),
+            false,
+            "/Library/Keychains/foo"
+        ));
         // Has team_id but we need signing_id match
-        assert!(!exception.matches("/any/path", Some("SOMETEAM"), None, false, "/Library/Keychains/foo"));
+        assert!(!exception.matches(
+            "/any/path",
+            Some("SOMETEAM"),
+            None,
+            false,
+            "/Library/Keychains/foo"
+        ));
     }
 
     #[test]
@@ -351,9 +381,21 @@ mod tests {
         };
 
         // Adhoc with matching signing_id
-        assert!(exception.matches("/any/path", None, Some("adhoc-app-id"), true, "~/.ssh/id_rsa"));
+        assert!(exception.matches(
+            "/any/path",
+            None,
+            Some("adhoc-app-id"),
+            true,
+            "~/.ssh/id_rsa"
+        ));
         // Not adhoc - should not match even with matching signing_id
-        assert!(!exception.matches("/any/path", None, Some("adhoc-app-id"), false, "~/.ssh/id_rsa"));
+        assert!(!exception.matches(
+            "/any/path",
+            None,
+            Some("adhoc-app-id"),
+            false,
+            "~/.ssh/id_rsa"
+        ));
         // Adhoc but wrong signing_id
         assert!(!exception.matches("/any/path", None, Some("wrong-id"), true, "~/.ssh/id_rsa"));
     }
@@ -376,7 +418,13 @@ mod tests {
         };
 
         // Any adhoc process matches
-        assert!(exception.matches("/any/path", None, Some("any-adhoc-id"), true, "~/.ssh/id_rsa"));
+        assert!(exception.matches(
+            "/any/path",
+            None,
+            Some("any-adhoc-id"),
+            true,
+            "~/.ssh/id_rsa"
+        ));
         // Not adhoc - should not match
         assert!(!exception.matches("/any/path", None, Some("any-id"), false, "~/.ssh/id_rsa"));
     }
@@ -402,7 +450,13 @@ mod tests {
         // Has team_id - not unsigned
         assert!(!exception.matches("/any/path", Some("TEAM"), None, false, "~/.ssh/id_rsa"));
         // Has signing_id - not unsigned
-        assert!(!exception.matches("/any/path", None, Some("com.example"), false, "~/.ssh/id_rsa"));
+        assert!(!exception.matches(
+            "/any/path",
+            None,
+            Some("com.example"),
+            false,
+            "~/.ssh/id_rsa"
+        ));
         // Adhoc - not unsigned
         assert!(!exception.matches("/any/path", None, Some("adhoc-id"), true, "~/.ssh/id_rsa"));
     }
@@ -478,7 +532,10 @@ mod tests {
             .build();
 
         assert_eq!(exception.signer_type, Some(SignerType::SigningId));
-        assert_eq!(exception.signing_id, Some("com.apple.bluetoothd".to_string()));
+        assert_eq!(
+            exception.signing_id,
+            Some("com.apple.bluetoothd".to_string())
+        );
         assert!(exception.team_id.is_none());
     }
 
@@ -514,7 +571,13 @@ mod tests {
 
         // Should match regardless of team_id or signing_id
         assert!(exception.matches("/any/path", Some("ANY_TEAM"), None, false, "~/.ssh/id_rsa"));
-        assert!(exception.matches("/any/path", None, Some("com.example.app"), false, "~/.ssh/id_rsa"));
+        assert!(exception.matches(
+            "/any/path",
+            None,
+            Some("com.example.app"),
+            false,
+            "~/.ssh/id_rsa"
+        ));
         assert!(exception.matches("/any/path", None, None, false, "~/.ssh/id_rsa"));
         assert!(exception.matches("/any/path", None, Some("adhoc"), true, "~/.ssh/id_rsa"));
     }
@@ -561,10 +624,16 @@ mod tests {
     fn test_signer_type_from_str() {
         assert_eq!("team_id".parse::<SignerType>().unwrap(), SignerType::TeamId);
         assert_eq!("teamid".parse::<SignerType>().unwrap(), SignerType::TeamId);
-        assert_eq!("signing_id".parse::<SignerType>().unwrap(), SignerType::SigningId);
+        assert_eq!(
+            "signing_id".parse::<SignerType>().unwrap(),
+            SignerType::SigningId
+        );
         assert_eq!("adhoc".parse::<SignerType>().unwrap(), SignerType::Adhoc);
         assert_eq!("ad-hoc".parse::<SignerType>().unwrap(), SignerType::Adhoc);
-        assert_eq!("unsigned".parse::<SignerType>().unwrap(), SignerType::Unsigned);
+        assert_eq!(
+            "unsigned".parse::<SignerType>().unwrap(),
+            SignerType::Unsigned
+        );
         assert!("invalid".parse::<SignerType>().is_err());
     }
 
@@ -620,9 +689,21 @@ mod tests {
         };
 
         // Should not match even if process has a signing_id
-        assert!(!exception.matches("/any/path", None, Some("com.example.app"), false, "~/.ssh/id_rsa"));
+        assert!(!exception.matches(
+            "/any/path",
+            None,
+            Some("com.example.app"),
+            false,
+            "~/.ssh/id_rsa"
+        ));
         // Should not match platform binary
-        assert!(!exception.matches("/any/path", None, Some("com.apple.bluetoothd"), false, "~/.ssh/id_rsa"));
+        assert!(!exception.matches(
+            "/any/path",
+            None,
+            Some("com.apple.bluetoothd"),
+            false,
+            "~/.ssh/id_rsa"
+        ));
     }
 
     #[test]
@@ -730,7 +811,7 @@ mod tests {
             "/usr/local/bin/adhoc-tool",
             None,
             Some("com.apple.bluetoothd"), // Same signing_id
-            true, // IS adhoc
+            true,                         // IS adhoc
             "~/.ssh/id_rsa"
         ));
     }
@@ -835,7 +916,8 @@ mod tests {
 
         // Exact should only match the literal string "~/.ssh/*"
         assert!(!exact_exception.matches("/any", None, None, false, "~/.ssh/id_rsa"));
-        assert!(exact_exception.matches("/any", None, None, false, "~/.ssh/*")); // Literal match
+        assert!(exact_exception.matches("/any", None, None, false, "~/.ssh/*"));
+        // Literal match
     }
 
     #[test]
@@ -865,7 +947,13 @@ mod tests {
         assert!(!exception.matches("/usr/bin/ssh", Some("OTHER"), None, false, "~/.ssh/id_rsa"));
 
         // File mismatch
-        assert!(!exception.matches("/usr/bin/ssh", Some("APPLE"), None, false, "~/.ssh/id_ed25519"));
+        assert!(!exception.matches(
+            "/usr/bin/ssh",
+            Some("APPLE"),
+            None,
+            false,
+            "~/.ssh/id_ed25519"
+        ));
 
         // No team_id at all
         assert!(!exception.matches("/usr/bin/ssh", None, None, false, "~/.ssh/id_rsa"));

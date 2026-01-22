@@ -471,6 +471,7 @@ async fn send_response(
 
 #[cfg(test)]
 mod tests {
+    use super::super::protocol::AddExceptionParams;
     use super::*;
     use tempfile::tempdir;
 
@@ -548,16 +549,18 @@ mod tests {
         assert!(is_privileged_request(&Request::Kill {
             event_id: "test".to_string()
         }));
-        assert!(is_privileged_request(&Request::AddException {
-            process_path: Some("/test".to_string()),
-            signer_type: None,
-            team_id: None,
-            signing_id: None,
-            file_pattern: "~/.ssh/*".to_string(),
-            is_glob: true,
-            expires_at: None,
-            comment: None,
-        }));
+        assert!(is_privileged_request(&Request::AddException(
+            AddExceptionParams {
+                process_path: Some("/test".to_string()),
+                signer_type: None,
+                team_id: None,
+                signing_id: None,
+                file_pattern: "~/.ssh/*".to_string(),
+                is_glob: true,
+                expires_at: None,
+                comment: None,
+            }
+        )));
         assert!(is_privileged_request(&Request::RemoveException { id: 1 }));
         assert!(is_privileged_request(&Request::AllowOnce {
             event_id: "test".to_string()

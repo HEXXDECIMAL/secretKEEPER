@@ -876,7 +876,10 @@ mod tests {
         assert_eq!(exceptions.len(), 1);
         assert_eq!(exceptions[0].id, id);
         assert_eq!(exceptions[0].signer_type, Some(SignerType::SigningId));
-        assert_eq!(exceptions[0].signing_id, Some("com.apple.bluetoothd".to_string()));
+        assert_eq!(
+            exceptions[0].signing_id,
+            Some("com.apple.bluetoothd".to_string())
+        );
         assert!(exceptions[0].team_id.is_none());
     }
 
@@ -954,7 +957,9 @@ mod tests {
                 } else {
                     None
                 },
-                signing_id: if signer_type == SignerType::SigningId || signer_type == SignerType::Adhoc {
+                signing_id: if signer_type == SignerType::SigningId
+                    || signer_type == SignerType::Adhoc
+                {
                     Some("test.signing.id".to_string())
                 } else {
                     None
@@ -1004,7 +1009,10 @@ mod tests {
 
         assert_eq!(exceptions.len(), 1);
         assert_eq!(exceptions[0].team_id, Some("DEVELOPER123".to_string()));
-        assert_eq!(exceptions[0].signing_id, Some("com.developer.app".to_string()));
+        assert_eq!(
+            exceptions[0].signing_id,
+            Some("com.developer.app".to_string())
+        );
     }
 
     #[test]

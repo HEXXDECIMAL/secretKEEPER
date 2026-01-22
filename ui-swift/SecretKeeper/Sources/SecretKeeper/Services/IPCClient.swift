@@ -496,7 +496,7 @@ extension IPCClient: StreamDelegate {
 
 // MARK: - Request Types
 
-private struct SubscribeRequest: Codable {
+private struct SubscribeRequest: Encodable {
     let action = "subscribe"
     let filter: EventFilter?
 }
@@ -513,20 +513,20 @@ struct EventFilter: Codable {
     }
 }
 
-private struct StatusRequest: Codable {
+private struct StatusRequest: Encodable {
     let action = "status"
 }
 
-private struct GetModeRequest: Codable {
+private struct GetModeRequest: Encodable {
     let action = "get_mode"
 }
 
-private struct SetModeRequest: Codable {
+private struct SetModeRequest: Encodable {
     let action = "set_mode"
     let mode: String
 }
 
-private struct AllowOnceRequest: Codable {
+private struct AllowOnceRequest: Encodable {
     let action = "allow_once"
     let eventId: String
 
@@ -536,7 +536,7 @@ private struct AllowOnceRequest: Codable {
     }
 }
 
-private struct AllowPermanentlyRequest: Codable {
+private struct AllowPermanentlyRequest: Encodable {
     let action = "allow_permanently"
     let eventId: String
     let expiresAt: Date?
@@ -550,7 +550,7 @@ private struct AllowPermanentlyRequest: Codable {
     }
 }
 
-private struct KillRequest: Codable {
+private struct KillRequest: Encodable {
     let action = "kill"
     let eventId: String
 
@@ -560,30 +560,30 @@ private struct KillRequest: Codable {
     }
 }
 
-private struct GetViolationsRequest: Codable {
+private struct GetViolationsRequest: Encodable {
     let action = "get_violations"
     let limit: Int?
     let since: Date?
 }
 
-private struct GetExceptionsRequest: Codable {
+private struct GetExceptionsRequest: Encodable {
     let action = "get_exceptions"
 }
 
-private struct RemoveExceptionRequest: Codable {
+private struct RemoveExceptionRequest: Encodable {
     let action = "remove_exception"
     let id: Int64
 }
 
-private struct PingRequest: Codable {
+private struct PingRequest: Encodable {
     let action = "ping"
 }
 
-private struct GetCategoriesRequest: Codable {
+private struct GetCategoriesRequest: Encodable {
     let action = "get_categories"
 }
 
-private struct SetCategoryEnabledRequest: Codable {
+private struct SetCategoryEnabledRequest: Encodable {
     let action = "set_category_enabled"
     let categoryId: String
     let enabled: Bool
@@ -595,7 +595,7 @@ private struct SetCategoryEnabledRequest: Codable {
     }
 }
 
-private struct GetAgentInfoRequest: Codable {
+private struct GetAgentInfoRequest: Encodable {
     let action = "get_agent_info"
 }
 

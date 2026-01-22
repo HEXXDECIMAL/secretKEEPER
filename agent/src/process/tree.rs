@@ -56,7 +56,10 @@ pub fn build_process_tree(pid: u32) -> Vec<ProcessTreeEntry> {
             }
             current_pid = ppid.unwrap_or(0);
         } else {
-            tracing::debug!("Failed to get process info for PID {} - process may have exited", current_pid);
+            tracing::debug!(
+                "Failed to get process info for PID {} - process may have exited",
+                current_pid
+            );
             break;
         }
     }

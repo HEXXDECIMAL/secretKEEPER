@@ -141,9 +141,8 @@ impl RuleEngine {
         let signing_id = context.signing_id.as_deref();
         let process_path = context.path.to_string_lossy();
         // Adhoc = has signing_id, no team_id, and not a platform binary
-        let is_adhoc = signing_id.is_some()
-            && team_id.is_none()
-            && context.platform_binary != Some(true);
+        let is_adhoc =
+            signing_id.is_some() && team_id.is_none() && context.platform_binary != Some(true);
         for exception in &self.exceptions {
             if exception.matches(&process_path, team_id, signing_id, is_adhoc, file_path) {
                 if debug {

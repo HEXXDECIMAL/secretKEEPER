@@ -160,7 +160,7 @@ public struct Exception: Codable, Identifiable, Hashable {
 }
 
 /// Request to add a new exception.
-public struct AddExceptionRequest: Codable {
+public struct AddExceptionRequest: Encodable {
     public let action = "add_exception"
     public let processPath: String?
     public let signerType: String?

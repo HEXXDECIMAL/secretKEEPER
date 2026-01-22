@@ -20,12 +20,25 @@ build-release:
 test:
 	$(CARGO) test
 	@echo "Running Swift tests..."
-	@cd ui-swift/SecretKeeper && DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
-		/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swift test
+	@if [ -d "/Applications/Xcode.app" ]; then \
+		cd ui-swift/SecretKeeper && DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
+			/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swift test; \
+	else \
+		echo "Skipping Swift tests (Xcode not installed - only command line tools available)"; \
+		echo "To run Swift tests, install Xcode from the App Store"; \
+	fi
 
 lint:
 	$(CARGO) clippy -- -D warnings
 	$(CARGO) fmt -- --check
+	@echo "Checking Swift code..."
+	@cd ui-swift/SecretKeeper && swift build 2>&1 | grep -E "(error:|warning:)" | grep -v "immutable property will not be decoded" || true
+	@if command -v swiftlint >/dev/null 2>&1; then \
+		echo "Running SwiftLint..."; \
+		cd ui-swift/SecretKeeper && swiftlint lint --strict Sources/ 2>/dev/null || true; \
+	else \
+		echo "SwiftLint not installed (optional - install with: brew install swiftlint)"; \
+	fi
 
 fmt:
 	$(CARGO) fmt

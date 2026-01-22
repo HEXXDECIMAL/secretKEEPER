@@ -594,7 +594,10 @@ fn dump_exceptions(args: &Args) -> Result<()> {
     let config = load_config(args)?;
 
     if !config.agent.database_path.exists() {
-        eprintln!("Database not found: {}", config.agent.database_path.display());
+        eprintln!(
+            "Database not found: {}",
+            config.agent.database_path.display()
+        );
         eprintln!("No exceptions to dump.");
         return Ok(());
     }
@@ -607,7 +610,10 @@ fn dump_exceptions(args: &Args) -> Result<()> {
         return Ok(());
     }
 
-    println!("# Exceptions exported from {}", config.agent.database_path.display());
+    println!(
+        "# Exceptions exported from {}",
+        config.agent.database_path.display()
+    );
     println!("# Generated: {}", chrono::Utc::now().to_rfc3339());
     println!("# Count: {}", exceptions.len());
     println!();
@@ -626,7 +632,10 @@ fn dump_exceptions(args: &Args) -> Result<()> {
         if let Some(ref signing_id) = exception.signing_id {
             println!("signing_id = \"{}\"", escape_toml_string(signing_id));
         }
-        println!("file_pattern = \"{}\"", escape_toml_string(&exception.file_pattern));
+        println!(
+            "file_pattern = \"{}\"",
+            escape_toml_string(&exception.file_pattern)
+        );
         if let Some(ref expires_at) = exception.expires_at {
             println!("expires_at = \"{}\"", expires_at.to_rfc3339());
         }

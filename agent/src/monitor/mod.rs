@@ -495,7 +495,11 @@ fn build_tree_from_context(context: &ProcessContext) -> Vec<ProcessTreeEntry> {
         .unwrap_or_default();
 
     // Query actual stopped state - processes should already be stopped if applicable
-    let is_stopped = if pid > 0 { is_process_stopped(pid) } else { false };
+    let is_stopped = if pid > 0 {
+        is_process_stopped(pid)
+    } else {
+        false
+    };
 
     let first_entry = ProcessTreeEntry {
         pid,

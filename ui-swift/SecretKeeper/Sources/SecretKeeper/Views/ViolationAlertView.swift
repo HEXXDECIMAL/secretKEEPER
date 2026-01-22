@@ -31,10 +31,10 @@ struct ViolationAlertView: View {
         // Mark action as taken immediately (synchronously)
         actionTaken = true
 
-        // Close the window FIRST to remove view from hierarchy.
-        // This ensures no SwiftUI updates will try to reach this view
-        // when @Published properties change during state modifications.
-        window?.close()
+        // Use orderOut to close WITHOUT animation - this prevents use-after-free
+        // crashes in _NSWindowTransformAnimation when SwiftUI tears down the view
+        // hierarchy while an animation block still holds references.
+        window?.orderOut(nil)
 
         // Wait for window/view cleanup before modifying state.
         // This delay lets SwiftUI fully tear down the view hierarchy
@@ -246,16 +246,12 @@ struct ViolationAlertView: View {
                     }
 
                     Button("Close") {
-                        fputs("[ViolationAlertView] Close button tapped, keyWindow=\(NSApp.keyWindow?.title ?? "nil"), mainWindow=\(NSApp.mainWindow?.title ?? "nil")\n", stderr)
-                        // Try keyWindow first, then mainWindow, then find by title
+                        // Use orderOut to close without animation - prevents use-after-free
+                        // in _NSWindowTransformAnimation when SwiftUI tears down the view.
                         if let window = NSApp.keyWindow {
-                            fputs("[ViolationAlertView] Closing keyWindow: \(window.title)\n", stderr)
-                            window.close()
+                            window.orderOut(nil)
                         } else if let window = NSApp.windows.first(where: { $0.title.contains("Violation") }) {
-                            fputs("[ViolationAlertView] Closing window by title: \(window.title)\n", stderr)
-                            window.close()
-                        } else {
-                            fputs("[ViolationAlertView] No window found to close!\n", stderr)
+                            window.orderOut(nil)
                         }
                     }
                     .keyboardShortcut(.defaultAction)

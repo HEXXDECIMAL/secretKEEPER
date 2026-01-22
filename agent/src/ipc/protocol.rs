@@ -56,24 +56,7 @@ pub enum Request {
     GetExceptions,
 
     /// Add a new exception.
-    AddException {
-        #[serde(default)]
-        process_path: Option<String>,
-        /// Type of signer: "team_id", "signing_id", "adhoc", "unsigned"
-        #[serde(default)]
-        signer_type: Option<String>,
-        #[serde(default)]
-        team_id: Option<String>,
-        #[serde(default)]
-        signing_id: Option<String>,
-        file_pattern: String,
-        #[serde(default)]
-        is_glob: bool,
-        #[serde(default)]
-        expires_at: Option<DateTime<Utc>>,
-        #[serde(default)]
-        comment: Option<String>,
-    },
+    AddException(AddExceptionParams),
 
     /// Remove an exception by ID.
     RemoveException { id: i64 },
@@ -92,6 +75,27 @@ pub enum Request {
 
     /// Get agent binary info (for auto-upgrade detection).
     GetAgentInfo,
+}
+
+/// Parameters for adding a new exception.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AddExceptionParams {
+    #[serde(default)]
+    pub process_path: Option<String>,
+    /// Type of signer: "team_id", "signing_id", "adhoc", "unsigned"
+    #[serde(default)]
+    pub signer_type: Option<String>,
+    #[serde(default)]
+    pub team_id: Option<String>,
+    #[serde(default)]
+    pub signing_id: Option<String>,
+    pub file_pattern: String,
+    #[serde(default)]
+    pub is_glob: bool,
+    #[serde(default)]
+    pub expires_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub comment: Option<String>,
 }
 
 /// Filter for event subscription.
@@ -384,13 +388,9 @@ mod tests {
         let json = r#"{"action": "add_exception", "file_pattern": "~/.ssh/*", "is_glob": true}"#;
         let req: Request = serde_json::from_str(json).unwrap();
         match req {
-            Request::AddException {
-                file_pattern,
-                is_glob,
-                ..
-            } => {
-                assert_eq!(file_pattern, "~/.ssh/*");
-                assert!(is_glob);
+            Request::AddException(params) => {
+                assert_eq!(params.file_pattern, "~/.ssh/*");
+                assert!(params.is_glob);
             }
             _ => panic!("Wrong variant"),
         }
@@ -485,7 +485,7 @@ mod tests {
     #[test]
     fn test_roundtrip_serialize_deserialize() {
         // Test that serializing and deserializing produces equivalent results
-        let original = Request::AddException {
+        let original = Request::AddException(AddExceptionParams {
             process_path: Some("/usr/bin/mytool".to_string()),
             signer_type: Some("team_id".to_string()),
             team_id: Some("TEAM123".to_string()),
@@ -494,27 +494,19 @@ mod tests {
             is_glob: true,
             expires_at: None,
             comment: Some("Test exception".to_string()),
-        };
+        });
 
         let json = serde_json::to_string(&original).unwrap();
         let restored: Request = serde_json::from_str(&json).unwrap();
 
         match restored {
-            Request::AddException {
-                process_path,
-                signer_type,
-                team_id,
-                file_pattern,
-                is_glob,
-                comment,
-                ..
-            } => {
-                assert_eq!(process_path, Some("/usr/bin/mytool".to_string()));
-                assert_eq!(signer_type, Some("team_id".to_string()));
-                assert_eq!(team_id, Some("TEAM123".to_string()));
-                assert_eq!(file_pattern, "~/.ssh/*");
-                assert!(is_glob);
-                assert_eq!(comment, Some("Test exception".to_string()));
+            Request::AddException(params) => {
+                assert_eq!(params.process_path, Some("/usr/bin/mytool".to_string()));
+                assert_eq!(params.signer_type, Some("team_id".to_string()));
+                assert_eq!(params.team_id, Some("TEAM123".to_string()));
+                assert_eq!(params.file_pattern, "~/.ssh/*");
+                assert!(params.is_glob);
+                assert_eq!(params.comment, Some("Test exception".to_string()));
             }
             _ => panic!("Wrong variant after roundtrip"),
         }

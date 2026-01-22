@@ -1,6 +1,6 @@
 //! Request handlers for IPC commands.
 
-use super::protocol::{Category, Request, Response, ViolationEvent};
+use super::protocol::{AddExceptionParams, Category, Request, Response, ViolationEvent};
 use crate::rules::{Exception, RuleEngine, SignerType};
 use crate::storage::{Storage, Violation};
 use chrono::Utc;
@@ -68,28 +68,7 @@ impl HandlerState {
 
             Request::GetExceptions => self.handle_get_exceptions().await,
 
-            Request::AddException {
-                process_path,
-                signer_type,
-                team_id,
-                signing_id,
-                file_pattern,
-                is_glob,
-                expires_at,
-                comment,
-            } => {
-                self.handle_add_exception(
-                    process_path,
-                    signer_type,
-                    team_id,
-                    signing_id,
-                    file_pattern,
-                    is_glob,
-                    expires_at,
-                    comment,
-                )
-                .await
-            }
+            Request::AddException(params) => self.handle_add_exception(params).await,
 
             Request::RemoveException { id } => self.handle_remove_exception(id).await,
 
@@ -207,36 +186,27 @@ impl HandlerState {
         }
     }
 
-    async fn handle_add_exception(
-        &self,
-        process_path: Option<String>,
-        signer_type: Option<String>,
-        team_id: Option<String>,
-        signing_id: Option<String>,
-        file_pattern: String,
-        is_glob: bool,
-        expires_at: Option<chrono::DateTime<Utc>>,
-        comment: Option<String>,
-    ) -> Response {
+    async fn handle_add_exception(&self, params: AddExceptionParams) -> Response {
         // Must have at least one identifier
-        let has_signer = team_id.is_some() || signing_id.is_some() || signer_type.is_some();
-        if process_path.is_none() && !has_signer {
+        let has_signer =
+            params.team_id.is_some() || params.signing_id.is_some() || params.signer_type.is_some();
+        if params.process_path.is_none() && !has_signer {
             return Response::error(
                 "Must specify either process_path or signer (signer_type + team_id/signing_id)",
             );
         }
 
         // Parse signer_type if provided
-        let parsed_signer_type: Option<SignerType> = match signer_type {
+        let parsed_signer_type: Option<SignerType> = match params.signer_type {
             Some(s) => match s.parse() {
                 Ok(t) => Some(t),
                 Err(e) => return Response::error(format!("Invalid signer_type: {}", e)),
             },
             None => {
                 // Infer signer_type from team_id/signing_id if not explicitly provided
-                if team_id.is_some() {
+                if params.team_id.is_some() {
                     Some(SignerType::TeamId)
-                } else if signing_id.is_some() {
+                } else if params.signing_id.is_some() {
                     // Default to SigningId if only signing_id is provided
                     Some(SignerType::SigningId)
                 } else {
@@ -247,15 +217,15 @@ impl HandlerState {
 
         let exception = Exception {
             id: 0, // Set by database
-            process_path,
+            process_path: params.process_path,
             signer_type: parsed_signer_type,
-            team_id,
-            signing_id,
-            file_pattern,
-            is_glob,
-            expires_at,
+            team_id: params.team_id,
+            signing_id: params.signing_id,
+            file_pattern: params.file_pattern,
+            is_glob: params.is_glob,
+            expires_at: params.expires_at,
             added_by: "ui".to_string(),
-            comment,
+            comment: params.comment,
             created_at: Utc::now(),
         };
 
@@ -344,7 +314,11 @@ impl HandlerState {
 
         // Create exception - determine signer type from event
         let (signer_type, team_id, signing_id) = if event.team_id.is_some() {
-            (Some(SignerType::TeamId), event.team_id.clone(), event.signing_id.clone())
+            (
+                Some(SignerType::TeamId),
+                event.team_id.clone(),
+                event.signing_id.clone(),
+            )
         } else if event.signing_id.is_some() {
             // No team_id but has signing_id - could be platform binary or adhoc
             // Use SigningId type for platform binaries
@@ -682,7 +656,7 @@ mod tests {
     async fn test_handle_add_exception_valid() {
         let (state, _dir) = create_test_state();
         let response = state
-            .handle(Request::AddException {
+            .handle(Request::AddException(AddExceptionParams {
                 process_path: Some("/usr/bin/test".to_string()),
                 signer_type: None,
                 team_id: None,
@@ -691,7 +665,7 @@ mod tests {
                 is_glob: true,
                 expires_at: None,
                 comment: Some("Test exception".to_string()),
-            })
+            }))
             .await;
         match response {
             Response::Success { message } => assert!(message.contains("Exception added")),
@@ -707,7 +681,7 @@ mod tests {
     async fn test_handle_add_exception_with_code_signer() {
         let (state, _dir) = create_test_state();
         let response = state
-            .handle(Request::AddException {
+            .handle(Request::AddException(AddExceptionParams {
                 process_path: None,
                 signer_type: Some("team_id".to_string()),
                 team_id: Some("APPLE123".to_string()),
@@ -716,7 +690,7 @@ mod tests {
                 is_glob: true,
                 expires_at: None,
                 comment: None,
-            })
+            }))
             .await;
         match response {
             Response::Success { message } => assert!(message.contains("Exception added")),
@@ -728,7 +702,7 @@ mod tests {
     async fn test_handle_add_exception_invalid_no_identifier() {
         let (state, _dir) = create_test_state();
         let response = state
-            .handle(Request::AddException {
+            .handle(Request::AddException(AddExceptionParams {
                 process_path: None,
                 signer_type: None,
                 team_id: None,
@@ -737,7 +711,7 @@ mod tests {
                 is_glob: true,
                 expires_at: None,
                 comment: None,
-            })
+            }))
             .await;
         match response {
             Response::Error { message, .. } => {
@@ -1062,7 +1036,7 @@ mod tests {
         // Adding exception with only signing_id should infer signer_type
         let (state, _dir) = create_test_state();
         let response = state
-            .handle(Request::AddException {
+            .handle(Request::AddException(AddExceptionParams {
                 process_path: None,
                 signer_type: None, // Not specified
                 team_id: None,
@@ -1071,7 +1045,7 @@ mod tests {
                 is_glob: true,
                 expires_at: None,
                 comment: None,
-            })
+            }))
             .await;
 
         // Should succeed - signing_id alone is valid
@@ -1083,7 +1057,10 @@ mod tests {
         // Verify the exception was stored with inferred signer_type
         let exceptions = state.storage.get_exceptions().unwrap();
         assert_eq!(exceptions.len(), 1);
-        assert_eq!(exceptions[0].signer_type, Some(crate::rules::SignerType::SigningId));
+        assert_eq!(
+            exceptions[0].signer_type,
+            Some(crate::rules::SignerType::SigningId)
+        );
     }
 
     #[tokio::test]
@@ -1091,7 +1068,7 @@ mod tests {
         // Adding exception with only team_id should infer signer_type
         let (state, _dir) = create_test_state();
         let response = state
-            .handle(Request::AddException {
+            .handle(Request::AddException(AddExceptionParams {
                 process_path: None,
                 signer_type: None, // Not specified
                 team_id: Some("APPLE123".to_string()),
@@ -1100,7 +1077,7 @@ mod tests {
                 is_glob: true,
                 expires_at: None,
                 comment: None,
-            })
+            }))
             .await;
 
         // Should succeed
@@ -1112,7 +1089,10 @@ mod tests {
         // Verify the exception was stored with inferred signer_type
         let exceptions = state.storage.get_exceptions().unwrap();
         assert_eq!(exceptions.len(), 1);
-        assert_eq!(exceptions[0].signer_type, Some(crate::rules::SignerType::TeamId));
+        assert_eq!(
+            exceptions[0].signer_type,
+            Some(crate::rules::SignerType::TeamId)
+        );
     }
 
     #[tokio::test]
@@ -1120,7 +1100,7 @@ mod tests {
         // Adding exception with explicit signer_type should use it
         let (state, _dir) = create_test_state();
         let response = state
-            .handle(Request::AddException {
+            .handle(Request::AddException(AddExceptionParams {
                 process_path: None,
                 signer_type: Some("adhoc".to_string()),
                 team_id: None,
@@ -1129,7 +1109,7 @@ mod tests {
                 is_glob: true,
                 expires_at: None,
                 comment: None,
-            })
+            }))
             .await;
 
         match response {
@@ -1139,7 +1119,10 @@ mod tests {
 
         let exceptions = state.storage.get_exceptions().unwrap();
         assert_eq!(exceptions.len(), 1);
-        assert_eq!(exceptions[0].signer_type, Some(crate::rules::SignerType::Adhoc));
+        assert_eq!(
+            exceptions[0].signer_type,
+            Some(crate::rules::SignerType::Adhoc)
+        );
     }
 
     #[tokio::test]
@@ -1147,7 +1130,7 @@ mod tests {
         // Invalid signer_type string should return error
         let (state, _dir) = create_test_state();
         let response = state
-            .handle(Request::AddException {
+            .handle(Request::AddException(AddExceptionParams {
                 process_path: None,
                 signer_type: Some("invalid_type".to_string()),
                 team_id: Some("TEAM".to_string()),
@@ -1156,12 +1139,15 @@ mod tests {
                 is_glob: true,
                 expires_at: None,
                 comment: None,
-            })
+            }))
             .await;
 
         match response {
             Response::Error { message, .. } => {
-                assert!(message.contains("Invalid signer_type") || message.contains("unknown signer type"))
+                assert!(
+                    message.contains("Invalid signer_type")
+                        || message.contains("unknown signer type")
+                )
             }
             _ => panic!("Expected Error response"),
         }
@@ -1172,7 +1158,7 @@ mod tests {
         // Adding unsigned exception should work
         let (state, _dir) = create_test_state();
         let response = state
-            .handle(Request::AddException {
+            .handle(Request::AddException(AddExceptionParams {
                 process_path: Some("/usr/local/bin/unsigned-tool".to_string()),
                 signer_type: Some("unsigned".to_string()),
                 team_id: None,
@@ -1181,7 +1167,7 @@ mod tests {
                 is_glob: true,
                 expires_at: None,
                 comment: None,
-            })
+            }))
             .await;
 
         match response {
@@ -1191,7 +1177,10 @@ mod tests {
 
         let exceptions = state.storage.get_exceptions().unwrap();
         assert_eq!(exceptions.len(), 1);
-        assert_eq!(exceptions[0].signer_type, Some(crate::rules::SignerType::Unsigned));
+        assert_eq!(
+            exceptions[0].signer_type,
+            Some(crate::rules::SignerType::Unsigned)
+        );
     }
 
     #[tokio::test]
@@ -1199,7 +1188,7 @@ mod tests {
         // Both process_path and signer can be specified together
         let (state, _dir) = create_test_state();
         let response = state
-            .handle(Request::AddException {
+            .handle(Request::AddException(AddExceptionParams {
                 process_path: Some("/usr/bin/ssh".to_string()),
                 signer_type: Some("team_id".to_string()),
                 team_id: Some("APPLE".to_string()),
@@ -1208,7 +1197,7 @@ mod tests {
                 is_glob: true,
                 expires_at: None,
                 comment: Some("Allow Apple ssh".to_string()),
-            })
+            }))
             .await;
 
         match response {
@@ -1227,7 +1216,7 @@ mod tests {
         // Empty file_pattern should still be accepted (though not very useful)
         let (state, _dir) = create_test_state();
         let response = state
-            .handle(Request::AddException {
+            .handle(Request::AddException(AddExceptionParams {
                 process_path: Some("/usr/bin/test".to_string()),
                 signer_type: None,
                 team_id: None,
@@ -1236,7 +1225,7 @@ mod tests {
                 is_glob: false,
                 expires_at: None,
                 comment: None,
-            })
+            }))
             .await;
 
         // Should succeed - empty pattern won't match anything useful but is valid
@@ -1252,7 +1241,7 @@ mod tests {
         let expires = Utc::now() + chrono::Duration::hours(1);
 
         let response = state
-            .handle(Request::AddException {
+            .handle(Request::AddException(AddExceptionParams {
                 process_path: Some("/usr/bin/test".to_string()),
                 signer_type: None,
                 team_id: None,
@@ -1261,7 +1250,7 @@ mod tests {
                 is_glob: true,
                 expires_at: Some(expires),
                 comment: None,
-            })
+            }))
             .await;
 
         match response {

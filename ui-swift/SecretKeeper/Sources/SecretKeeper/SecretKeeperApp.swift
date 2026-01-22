@@ -67,7 +67,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     let agentManager = AgentManager.shared
     private var cancellables = Set<AnyCancellable>()
     /// Retain alert windows to prevent premature deallocation.
-    private var alertWindows: [NSWindow] = []
+    /// Each window is paired with its close notification observer token.
+    private var alertWindows: [(window: NSWindow, observer: NSObjectProtocol)] = []
     /// Reconnection state for exponential backoff.
     /// Note: Reconnection only tries to connect to the socket - it never prompts for password.
     private var reconnectAttempt = 0
@@ -162,6 +163,32 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     }
 
+    /// Register a window for lifecycle management.
+    /// This retains the window and sets up proper observer cleanup when closed.
+    private func registerAlertWindow(_ window: NSWindow) {
+        // Create observer for window close
+        let observer = NotificationCenter.default.addObserver(
+            forName: NSWindow.willCloseNotification,
+            object: window,
+            queue: .main
+        ) { [weak self] notification in
+            guard let self = self,
+                  let closedWindow = notification.object as? NSWindow else { return }
+            self.cleanupAlertWindow(closedWindow)
+        }
+
+        // Retain both window and observer
+        alertWindows.append((window: window, observer: observer))
+    }
+
+    /// Clean up a window and its associated observer.
+    private func cleanupAlertWindow(_ window: NSWindow) {
+        if let index = alertWindows.firstIndex(where: { $0.window === window }) {
+            let entry = alertWindows.remove(at: index)
+            NotificationCenter.default.removeObserver(entry.observer)
+        }
+    }
+
     @objc private func handleRestartAgent() {
         appLogger.info("User requested agent restart from menu")
         popover.performClose(nil)
@@ -237,18 +264,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
 
-        // Retain the window to prevent premature deallocation
-        alertWindows.append(window)
-
-        // Clean up when window closes
-        NotificationCenter.default.addObserver(
-            forName: NSWindow.willCloseNotification,
-            object: window,
-            queue: .main
-        ) { [weak self] notification in
-            guard let closedWindow = notification.object as? NSWindow else { return }
-            self?.alertWindows.removeAll { $0 === closedWindow }
-        }
+        // Set up window close handling with proper observer cleanup
+        registerAlertWindow(window)
     }
 
     private func checkAndStartAgent() {
@@ -566,18 +583,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             alertWindow.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
 
-            // Retain the window to prevent premature deallocation
-            self.alertWindows.append(alertWindow)
-
-            // Clean up when window closes
-            NotificationCenter.default.addObserver(
-                forName: NSWindow.willCloseNotification,
-                object: alertWindow,
-                queue: .main
-            ) { [weak self] notification in
-                guard let window = notification.object as? NSWindow else { return }
-                self?.alertWindows.removeAll { $0 === window }
-            }
+            // Register for lifecycle management
+            self.registerAlertWindow(alertWindow)
         }
     }
 
@@ -603,18 +610,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             alertWindow.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
 
-            // Retain the window to prevent premature deallocation
-            self.alertWindows.append(alertWindow)
-
-            // Clean up when window closes
-            NotificationCenter.default.addObserver(
-                forName: NSWindow.willCloseNotification,
-                object: alertWindow,
-                queue: .main
-            ) { [weak self] notification in
-                guard let window = notification.object as? NSWindow else { return }
-                self?.alertWindows.removeAll { $0 === window }
-            }
+            // Register for lifecycle management
+            self.registerAlertWindow(alertWindow)
         }
     }
 
