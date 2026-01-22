@@ -5,6 +5,7 @@ protocol IPCClientDelegate: AnyObject {
     func ipcClient(_ client: IPCClient, didReceiveViolationHistory violations: [ViolationEvent])
     func ipcClient(_ client: IPCClient, didUpdateStatus status: AgentStatus)
     func ipcClient(_ client: IPCClient, didReceiveCategories categories: [ProtectedCategory])
+    func ipcClient(_ client: IPCClient, didReceiveExceptions exceptions: [Exception])
     func ipcClient(_ client: IPCClient, didReceiveAgentInfo info: AgentInfo)
     func ipcClientDidConnect(_ client: IPCClient)
     func ipcClientDidDisconnect(_ client: IPCClient)
@@ -407,7 +408,23 @@ class IPCClient: NSObject {
                     }
                 }
 
-            case "success", "error", "pong", "exceptions", "config":
+            case "exceptions":
+                // Exceptions list response
+                if let exceptionsArray = json["exceptions"] as? [[String: Any]] {
+                    var exceptions: [Exception] = []
+                    for exDict in exceptionsArray {
+                        if let exData = try? JSONSerialization.data(withJSONObject: exDict),
+                           let exception = try? decoder.decode(Exception.self, from: exData) {
+                            exceptions.append(exception)
+                        }
+                    }
+                    DispatchQueue.main.async { [weak self] in
+                        guard let self = self else { return }
+                        self.delegate?.ipcClient(self, didReceiveExceptions: exceptions)
+                    }
+                }
+
+            case "success", "error", "pong", "config":
                 // Handle other response types as needed
                 break
 

@@ -39,10 +39,73 @@ impl PeerCredentials {
     }
 
     /// Check if peer is authorized for privileged operations.
-    /// Only root (UID 0) can perform privileged operations like kill, allow, set_mode.
+    /// Authorized users: root (UID 0) or members of the admin group (GID 80 on macOS).
+    /// This allows the desktop user to manage SecretKeeper from the UI.
     pub fn is_authorized(&self) -> bool {
-        self.is_root()
+        if self.is_root() {
+            return true;
+        }
+
+        // On macOS, allow users in the admin group (gid 80)
+        #[cfg(target_os = "macos")]
+        {
+            // Check if user is in admin group (gid 80)
+            // We check supplementary groups, not just the primary gid
+            if is_user_in_admin_group(self.uid) {
+                return true;
+            }
+        }
+
+        false
     }
+}
+
+/// Check if a user is in the admin group (gid 80) on macOS.
+#[cfg(target_os = "macos")]
+fn is_user_in_admin_group(uid: u32) -> bool {
+    use std::ffi::CStr;
+
+    // Get password entry for user
+    let passwd = unsafe { libc::getpwuid(uid) };
+    if passwd.is_null() {
+        return false;
+    }
+
+    let username = unsafe { CStr::from_ptr((*passwd).pw_name) };
+    let username = match username.to_str() {
+        Ok(s) => s,
+        Err(_) => return false,
+    };
+
+    // Check if user is in admin group (gid 80)
+    const ADMIN_GID: i32 = 80;
+    let mut ngroups: libc::c_int = 32;
+    let mut groups: Vec<i32> = vec![0; ngroups as usize];
+
+    let base_gid = unsafe { (*passwd).pw_gid as i32 };
+    let result = unsafe {
+        libc::getgrouplist(
+            username.as_ptr() as *const libc::c_char,
+            base_gid,
+            groups.as_mut_ptr(),
+            &mut ngroups,
+        )
+    };
+
+    if result < 0 {
+        // Buffer too small, resize and retry
+        groups.resize(ngroups as usize, 0);
+        unsafe {
+            libc::getgrouplist(
+                username.as_ptr() as *const libc::c_char,
+                base_gid,
+                groups.as_mut_ptr(),
+                &mut ngroups,
+            );
+        }
+    }
+
+    groups.iter().take(ngroups as usize).any(|&g| g == ADMIN_GID)
 }
 
 /// Get peer credentials from a Unix socket.
@@ -171,7 +234,7 @@ impl IpcServer {
 
         // Socket permissions allow local users to connect for status/violation viewing.
         // Security is enforced at the protocol level:
-        // - Privileged operations (kill, allow, set_mode) require root UID
+        // - Privileged operations (kill, allow, set_mode) require root or admin group
         // - Non-privileged operations (status, get_violations) are read-only
         // The socket is in /var/run which is protected from world-write.
         #[cfg(unix)]
@@ -444,7 +507,7 @@ mod tests {
 
     #[test]
     fn test_peer_credentials_is_authorized() {
-        // Root is authorized
+        // Root is always authorized
         let root_creds = PeerCredentials {
             pid: 1,
             uid: 0,
@@ -452,20 +515,16 @@ mod tests {
         };
         assert!(root_creds.is_authorized());
 
-        // Non-root users are not authorized for privileged operations
-        let user_creds = PeerCredentials {
-            pid: 1234,
-            uid: 501,
-            gid: 20,
-        };
-        assert!(!user_creds.is_authorized());
-
-        let other_user_creds = PeerCredentials {
+        // Unknown UIDs (not in admin group) are not authorized
+        let unknown_user_creds = PeerCredentials {
             pid: 1234,
             uid: 99999,
             gid: 99999,
         };
-        assert!(!other_user_creds.is_authorized());
+        assert!(!unknown_user_creds.is_authorized());
+
+        // Note: uid 501 (typical macOS user) may be authorized if in admin group.
+        // We don't test this as it depends on the system's user configuration.
     }
 
     #[test]

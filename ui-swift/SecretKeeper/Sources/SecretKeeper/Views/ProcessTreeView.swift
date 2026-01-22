@@ -6,17 +6,31 @@ struct ProcessTreeView: View {
     let entries: [ProcessTreeEntry]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            ForEach(Array(entries.enumerated()), id: \.offset) { index, entry in
-                ProcessTreeRow(
-                    entry: entry,
-                    depth: index,
-                    isLast: index == entries.count - 1
-                )
+        if entries.isEmpty {
+            HStack {
+                Image(systemName: "questionmark.circle")
+                    .foregroundColor(.secondary)
+                Text("Process tree not available")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
             }
+            .padding()
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color(NSColor.textBackgroundColor))
+            .cornerRadius(4)
+        } else {
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(Array(entries.enumerated()), id: \.offset) { index, entry in
+                    ProcessTreeRow(
+                        entry: entry,
+                        depth: index,
+                        isLast: index == entries.count - 1
+                    )
+                }
+            }
+            .background(Color(NSColor.textBackgroundColor))
+            .cornerRadius(4)
         }
-        .background(Color(NSColor.textBackgroundColor))
-        .cornerRadius(4)
     }
 }
 
@@ -26,7 +40,8 @@ struct ProcessTreeRow: View {
     let isLast: Bool
 
     var body: some View {
-        HStack(spacing: 0) {
+        let cachedState = entry.currentState  // Single syscall per render
+        return HStack(spacing: 0) {
             // Tree lines
             ForEach(0..<depth, id: \.self) { level in
                 HStack(spacing: 0) {
@@ -66,6 +81,10 @@ struct ProcessTreeRow: View {
                 // Process name and path
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
+                        // State icon prefix
+                        Text(cachedState.icon)
+                            .font(.system(.caption))
+
                         Text(entry.name)
                             .font(.system(.body, design: .monospaced))
                             .fontWeight(.medium)
@@ -84,20 +103,16 @@ struct ProcessTreeRow: View {
                                 .foregroundColor(.secondary)
                         }
 
-                        // Stopped badge
-                        if entry.isStopped {
-                            HStack(spacing: 3) {
-                                Image(systemName: "pause.circle.fill")
-                                    .font(.caption)
-                                Text("STOPPED")
-                                    .font(.system(.caption2, design: .monospaced))
-                                    .fontWeight(.bold)
-                            }
-                            .foregroundColor(.red)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(Color.red.opacity(0.15))
-                            .cornerRadius(4)
+                        // State badge for non-running processes
+                        if cachedState != .running {
+                            Text(cachedState.label.uppercased())
+                                .font(.system(.caption2, design: .monospaced))
+                                .fontWeight(.bold)
+                                .foregroundColor(cachedState == .stopped ? .red : .secondary)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(cachedState == .stopped ? Color.red.opacity(0.15) : Color.secondary.opacity(0.15))
+                                .cornerRadius(4)
                         }
                     }
 
@@ -140,8 +155,8 @@ struct ProcessTreeRow: View {
         }
         .background(
             depth == 0
-                ? (entry.isStopped ? Color.red.opacity(0.1) : Color.orange.opacity(0.1))
-                : (entry.isStopped ? Color.red.opacity(0.05) : Color.clear)
+                ? (cachedState == .stopped ? Color.red.opacity(0.1) : Color.orange.opacity(0.1))
+                : (cachedState == .stopped ? Color.red.opacity(0.05) : Color.clear)
         )
     }
 

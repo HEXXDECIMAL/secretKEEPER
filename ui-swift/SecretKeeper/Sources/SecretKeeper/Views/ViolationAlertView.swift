@@ -11,11 +11,13 @@ struct ViolationAlertView: View {
         if withAction {
             actionTaken = true
         }
+        // Capture window reference before state changes
+        let window = NSApp.keyWindow
         // Clear from pending violations
         appState.clearPendingViolation(violation.id)
-        // Close the window
-        if let window = NSApp.keyWindow {
-            window.close()
+        // Close the window after a brief delay to let SwiftUI finish processing state changes
+        DispatchQueue.main.async {
+            window?.close()
         }
     }
 
@@ -331,8 +333,25 @@ struct AddExceptionSheet: View {
     }
 
     private func addException() {
-        // Would call IPC to add exception
-        // For now, just dismiss
+        let expiresAt: Date? = isPermanent ? nil : Date().addingTimeInterval(TimeInterval(expirationHours * 3600))
+
+        // Determine process path or code signer based on exception type
+        let processPath: String? = exceptionType == .process ? violation.processPath : nil
+        let codeSigner: String? = exceptionType == .signer ? (violation.teamId ?? violation.signingId) : nil
+
+        AppDelegate.shared?.ipcClient?.addException(
+            processPath: processPath,
+            codeSigner: codeSigner,
+            filePattern: filePattern,
+            isGlob: isGlob,
+            expiresAt: expiresAt,
+            comment: comment.isEmpty ? nil : comment
+        )
+
+        // Refresh exceptions list
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            AppDelegate.shared?.ipcClient?.getExceptions()
+        }
     }
 }
 

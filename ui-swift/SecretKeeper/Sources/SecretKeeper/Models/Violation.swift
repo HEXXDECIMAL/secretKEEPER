@@ -1,4 +1,57 @@
 import Foundation
+import Darwin
+
+/// Current state of a process.
+enum ProcessState {
+    case running   // Process is alive and running
+    case stopped   // Process is alive but stopped (SIGSTOP)
+    case dead      // Process no longer exists
+
+    var icon: String {
+        switch self {
+        case .running: return "🟢"
+        case .stopped: return "⏹️"
+        case .dead: return "💀"
+        }
+    }
+
+    var label: String {
+        switch self {
+        case .running: return "Running"
+        case .stopped: return "Stopped"
+        case .dead: return "Dead"
+        }
+    }
+}
+
+/// Check the current state of a process by PID using sysctl.
+func processState(for pid: UInt32) -> ProcessState {
+    // First check if process exists
+    let signalResult = kill(pid_t(pid), 0)
+    if signalResult != 0 {
+        return .dead
+    }
+
+    // Use sysctl to get process info
+    var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, Int32(pid)]
+    var info = kinfo_proc()
+    var size = MemoryLayout<kinfo_proc>.size
+
+    let result = sysctl(&mib, UInt32(mib.count), &info, &size, nil, 0)
+    if result != 0 || size == 0 {
+        // Couldn't get info but process exists - assume running
+        return .running
+    }
+
+    // Check process status - SSTOP (4) means stopped
+    // From sys/proc.h: SSTOP = 4
+    let SSTOP: Int8 = 4
+    if info.kp_proc.p_stat == SSTOP {
+        return .stopped
+    }
+
+    return .running
+}
 
 /// A violation event from the agent.
 struct ViolationEvent: Codable, Identifiable, Hashable {
@@ -114,6 +167,11 @@ struct ProcessTreeEntry: Codable, Identifiable, Hashable {
         }
         return .unsigned
     }
+
+    /// Current state of this process (live check).
+    var currentState: ProcessState {
+        processState(for: pid)
+    }
 }
 
 /// Code signing status for color coding.
@@ -182,18 +240,29 @@ struct HistoryEntry: Identifiable, Hashable {
         self.actionTimestamp = userAction == .pending ? nil : Date()
     }
 
-    /// Check if the process is still actionable (alive and stopped).
+    /// Check if the process is still actionable (either process or parent is stopped).
     var isProcessActionable: Bool {
         guard userAction == .pending || userAction == .dismissed else {
             return false
         }
-        return isProcessAlive(pid: violation.processPid)
+        // Show kill/resume if either the process or its parent is stopped
+        if processState(for: violation.processPid) == .stopped {
+            return true
+        }
+        if let ppid = violation.parentPid, processState(for: ppid) == .stopped {
+            return true
+        }
+        return false
     }
 
-    /// Check if a process with the given PID is still running.
-    private func isProcessAlive(pid: UInt32) -> Bool {
-        // kill(pid, 0) returns 0 if process exists and we have permission to signal it
-        // Returns -1 with ESRCH if process doesn't exist
-        return kill(pid_t(pid), 0) == 0
+    /// Get current state of the violating process.
+    var processCurrentState: ProcessState {
+        processState(for: violation.processPid)
+    }
+
+    /// Get current state of the parent process.
+    var parentCurrentState: ProcessState? {
+        guard let ppid = violation.parentPid else { return nil }
+        return processState(for: ppid)
     }
 }

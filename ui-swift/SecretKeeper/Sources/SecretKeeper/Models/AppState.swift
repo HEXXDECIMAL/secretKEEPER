@@ -59,12 +59,6 @@ class AppState: ObservableObject {
         }
     }
 
-    /// Get a history entry by ID.
-    func historyEntry(forId id: String) -> HistoryEntry? {
-        // Read-only, safe from any thread
-        violationHistory.first { $0.id == id }
-    }
-
     private func trimHistory() {
         // Called from onMain, so already on main thread
         if violationHistory.count > maxHistoryEntries {

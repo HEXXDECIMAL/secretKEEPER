@@ -134,7 +134,7 @@ struct ViolationHistoryView: View {
     }
 
     private func refreshHistory() {
-        // History is maintained locally - this could fetch from agent if needed
+        AppDelegate.shared?.ipcClient?.getViolations(limit: 100)
     }
 
     private func exportHistory() {
@@ -373,9 +373,9 @@ struct HistoryDetailView: View {
     private var actionButtons: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 4) {
-                Image(systemName: "exclamationmark.circle.fill")
-                    .foregroundColor(.orange)
-                Text("Process is still running and can be managed")
+                Image(systemName: "pause.circle.fill")
+                    .foregroundColor(.red)
+                Text("Process or parent is stopped and awaiting action")
                     .font(.subheadline)
                     .foregroundColor(.secondary)
             }
@@ -416,24 +416,18 @@ struct HistoryDetailView: View {
     }
 
     private func handleKill() {
-        if let appDelegate = AppDelegate.shared {
-            appDelegate.handleKillProcess(eventId: entry.id)
-        }
-        appState.recordAction(.killed, forViolationId: entry.id)
+        // Note: AppDelegate.handleKillProcess already calls appState.recordAction
+        AppDelegate.shared?.handleKillProcess(eventId: entry.id)
     }
 
     private func handleResume() {
-        if let appDelegate = AppDelegate.shared {
-            appDelegate.handleAllowOnce(eventId: entry.id)
-        }
-        appState.recordAction(.resumed, forViolationId: entry.id)
+        // Note: AppDelegate.handleAllowOnce already calls appState.recordAction
+        AppDelegate.shared?.handleAllowOnce(eventId: entry.id)
     }
 
     private func handleAllow() {
-        if let appDelegate = AppDelegate.shared {
-            appDelegate.handleAllowPermanently(eventId: entry.id)
-        }
-        appState.recordAction(.allowed, forViolationId: entry.id)
+        // Note: AppDelegate.handleAllowPermanently already calls appState.recordAction
+        AppDelegate.shared?.handleAllowPermanently(eventId: entry.id)
     }
 }
 

@@ -52,11 +52,6 @@ struct SecretKeeperApp: App {
             ViolationHistoryView()
                 .environmentObject(appDelegate.appState)
         }
-
-        Window("Exception Manager", id: "exceptions") {
-            ExceptionManagerView()
-                .environmentObject(appDelegate.appState)
-        }
     }
 }
 
@@ -70,6 +65,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var ipcClient: IPCClient?
     let agentManager = AgentManager.shared
     private var cancellables = Set<AnyCancellable>()
+    /// Retain alert windows to prevent premature deallocation.
+    private var alertWindows: [NSWindow] = []
+    /// Reconnection state for exponential backoff.
+    /// Note: Reconnection only tries to connect to the socket - it never prompts for password.
+    private var reconnectAttempt = 0
+    private let maxReconnectAttempts = 3
+    private let baseReconnectDelay: TimeInterval = 5.0
 
     override init() {
         super.init()
@@ -215,6 +217,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         ipcClient?.disconnect()
         appState.isConnected = false
         appState.agentStatus = nil
+        reconnectAttempt = 0  // Reset retry counter for manual restart
 
         // Restart the agent
         startAgent()
@@ -256,25 +259,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     .environmentObject(appState)
             )
             window = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 500, height: 400),
+                contentRect: NSRect(x: 0, y: 0, width: 500, height: 500),
                 styleMask: [.titled, .closable, .resizable],
                 backing: .buffered,
                 defer: false
             )
             window.title = "Settings"
-
-        case "exceptions":
-            contentView = AnyView(
-                ExceptionManagerView()
-                    .environmentObject(appState)
-            )
-            window = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 700, height: 500),
-                styleMask: [.titled, .closable, .resizable, .miniaturizable],
-                backing: .buffered,
-                defer: false
-            )
-            window.title = "Exception Manager"
 
         default:
             appLogger.warning("Unknown window id: \(id)")
@@ -286,6 +276,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         window.center()
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+
+        // Retain the window to prevent premature deallocation
+        alertWindows.append(window)
+
+        // Clean up when window closes
+        NotificationCenter.default.addObserver(
+            forName: NSWindow.willCloseNotification,
+            object: window,
+            queue: .main
+        ) { [weak self] notification in
+            guard let closedWindow = notification.object as? NSWindow else { return }
+            self?.alertWindows.removeAll { $0 === closedWindow }
+        }
     }
 
     private func checkAndStartAgent() {
@@ -542,6 +545,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Subscribe to events
         appLogger.info("Subscribing to agent events")
         ipcClient?.subscribe()
+
+        // Load exceptions
+        ipcClient?.getExceptions()
     }
 
     @objc func togglePopover() {
@@ -553,43 +559,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        // Check various bad states
-        let isDisconnected = !appState.isConnected
-        let isDegraded = appState.agentStatus?.degradedMode == true
-        let isDisabledMode = appState.agentStatus?.mode == "disabled"
-        let agentRunning = agentManager.isAgentRunning()
+        // Log state for debugging but don't auto-restart (avoids password prompt loops)
+        appLogger.info("Menubar clicked: connected=\(appState.isConnected), agentRunning=\(agentManager.isAgentRunning())")
 
-        appLogger.info("Menubar clicked: connected=\(appState.isConnected), degraded=\(isDegraded), disabled=\(isDisabledMode), agentRunning=\(agentRunning)")
-
-        if isDisconnected && !agentRunning {
-            // Agent not running at all - try to start it in background, but still show popover
-            appLogger.info("Agent not running - attempting restart in background")
-            attemptAgentRestart()
-        } else if isDegraded || isDisabledMode {
-            // Agent running but FDA missing - try restart silently in background
-            appLogger.info("Agent in degraded/disabled mode - attempting silent restart")
-            restartAgent()
-        }
-
-        // Always show the popover so user can access menu (including Quit)
+        // Just show the popover - user can manually restart via menu if needed
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-    }
-
-    private func attemptAgentRestart() {
-        appLogger.info("Attempting to restart agent...")
-
-        // Disconnect current IPC client
-        ipcClient?.disconnect()
-        appState.isConnected = false
-        appState.agentStatus = nil
-
-        // Check if agent is installed
-        if agentManager.isAgentInstalled() {
-            startAgent()
-        } else {
-            // Show install dialog
-            showInstallOrStartAlert(installed: false)
-        }
     }
 
     func showViolationAlert(_ violation: ViolationEvent) {
@@ -623,6 +597,56 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             alertWindow.center()
             alertWindow.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
+
+            // Retain the window to prevent premature deallocation
+            self.alertWindows.append(alertWindow)
+
+            // Clean up when window closes
+            NotificationCenter.default.addObserver(
+                forName: NSWindow.willCloseNotification,
+                object: alertWindow,
+                queue: .main
+            ) { [weak self] notification in
+                guard let window = notification.object as? NSWindow else { return }
+                self?.alertWindows.removeAll { $0 === window }
+            }
+        }
+    }
+
+    /// Show violation alert for an existing violation (from history).
+    /// Does NOT add to pending violations or history - just shows the detail window.
+    func showExistingViolationAlert(_ violation: ViolationEvent) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+
+            // Open violation alert window
+            let alertWindow = NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: 600, height: 500),
+                styleMask: [.titled, .closable],
+                backing: .buffered,
+                defer: false
+            )
+            alertWindow.title = "SecretKeeper - Violation Details"
+            alertWindow.contentView = NSHostingView(
+                rootView: ViolationAlertView(violation: violation)
+                    .environmentObject(self.appState)
+            )
+            alertWindow.center()
+            alertWindow.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+
+            // Retain the window to prevent premature deallocation
+            self.alertWindows.append(alertWindow)
+
+            // Clean up when window closes
+            NotificationCenter.default.addObserver(
+                forName: NSWindow.willCloseNotification,
+                object: alertWindow,
+                queue: .main
+            ) { [weak self] notification in
+                guard let window = notification.object as? NSWindow else { return }
+                self?.alertWindows.removeAll { $0 === window }
+            }
         }
     }
 
@@ -711,6 +735,14 @@ extension AppDelegate: IPCClientDelegate {
         }
     }
 
+    func ipcClient(_ client: IPCClient, didReceiveExceptions exceptions: [Exception]) {
+        appLogger.info("Received \(exceptions.count) exceptions")
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            self.appState.exceptions = exceptions
+        }
+    }
+
     private func showDegradedModeAlert() {
         appLogger.warning("Agent is running without FDA - showing prompt")
 
@@ -757,8 +789,18 @@ extension AppDelegate: IPCClientDelegate {
 
         // Disconnect current IPC client
         ipcClient?.disconnect()
-        appState.isConnected = false
-        appState.agentStatus = nil
+
+        // Ensure state updates on main thread
+        let updateState = { [weak self] in
+            self?.appState.isConnected = false
+            self?.appState.agentStatus = nil
+            self?.reconnectAttempt = 0  // Reset retry counter for manual restart
+        }
+        if Thread.isMainThread {
+            updateState()
+        } else {
+            DispatchQueue.main.async(execute: updateState)
+        }
 
         // Stop and restart the agent
         agentManager.restartAgent { [weak self] result in
@@ -783,6 +825,7 @@ extension AppDelegate: IPCClientDelegate {
         appLogger.info("IPC client connected to agent")
         DispatchQueue.main.async { [weak self] in
             self?.appState.isConnected = true
+            self?.reconnectAttempt = 0  // Reset on successful connection
         }
         // Request agent info for auto-upgrade check
         client.getAgentInfo()
@@ -829,43 +872,35 @@ extension AppDelegate: IPCClientDelegate {
     }
 
     private func performSilentUpgrade() {
-        appLogger.info("=== Starting silent auto-upgrade ===")
-
-        // Disconnect IPC first
-        ipcClient?.disconnect()
-        appState.isConnected = false
-        appState.agentStatus = nil
-
-        // Restart the agent (which copies the new binary)
-        agentManager.startAgent { [weak self] result in
-            DispatchQueue.main.async {
-                switch result {
-                case .success:
-                    appLogger.info("Auto-upgrade completed successfully")
-                    self?.connectToAgent()
-                case .failure(let error):
-                    if case .userCancelled = error {
-                        appLogger.info("User cancelled auto-upgrade")
-                        // Try to reconnect to existing agent
-                        self?.connectToAgent()
-                    } else {
-                        appLogger.error("Auto-upgrade failed: \(error.localizedDescription)")
-                        // Don't show error dialog for auto-upgrade - just log it
-                        // Try to reconnect to existing agent
-                        self?.connectToAgent()
-                    }
-                }
-            }
-        }
+        // Auto-upgrade is disabled to avoid password prompt loops.
+        // Users can manually restart via the menu to upgrade.
+        appLogger.info("Auto-upgrade available but skipped (manual restart required)")
     }
 
     func ipcClientDidDisconnect(_ client: IPCClient) {
         appLogger.warning("IPC client disconnected from agent")
         DispatchQueue.main.async { [weak self] in
-            self?.appState.isConnected = false
-            // Attempt to reconnect after a delay
-            appLogger.info("Will attempt to reconnect in 5 seconds...")
-            DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
+            guard let self = self else { return }
+            self.appState.isConnected = false
+
+            // Check if we should attempt reconnection
+            if self.reconnectAttempt >= self.maxReconnectAttempts {
+                appLogger.error("Max reconnection attempts (\(self.maxReconnectAttempts)) reached - giving up")
+                return
+            }
+
+            // Calculate delay with exponential backoff (capped at 60 seconds)
+            let delay = min(self.baseReconnectDelay * pow(1.5, Double(self.reconnectAttempt)), 60.0)
+            self.reconnectAttempt += 1
+
+            appLogger.info("Will attempt to reconnect in \(String(format: "%.1f", delay))s (attempt \(self.reconnectAttempt)/\(self.maxReconnectAttempts))...")
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                guard let self = self else { return }
+                // Only reconnect if still disconnected (user might have manually reconnected)
+                guard !self.appState.isConnected else {
+                    appLogger.info("Already connected - skipping reconnection attempt")
+                    return
+                }
                 appLogger.info("Attempting to reconnect to agent...")
                 client.connect()
             }

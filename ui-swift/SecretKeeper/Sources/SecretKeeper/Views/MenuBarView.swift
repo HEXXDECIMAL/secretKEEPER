@@ -369,8 +369,8 @@ struct ViolationRow: View {
             popover.performClose(nil)
         }
 
-        // Open the violation alert window
-        AppDelegate.shared?.showViolationAlert(violation)
+        // Open the violation alert window (already in pending/history, don't re-add)
+        AppDelegate.shared?.showExistingViolationAlert(violation)
     }
 }
 
@@ -443,8 +443,8 @@ struct HistoryEntryRow: View {
         // Close the popover
         AppDelegate.shared?.popover.performClose(nil)
 
-        // Open the violation alert window
-        AppDelegate.shared?.showViolationAlert(entry.violation)
+        // Open the violation alert window (existing violation, don't re-add to history)
+        AppDelegate.shared?.showExistingViolationAlert(entry.violation)
     }
 }
 
