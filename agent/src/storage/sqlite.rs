@@ -562,6 +562,7 @@ mod tests {
             team_id: None,
             signing_id: Some("com.apple.cat".to_string()),
             is_platform_binary: true,
+            is_stopped: false,
         }];
 
         let violation = Violation::new("~/.ssh/id_rsa", "/usr/bin/cat", 1234, "blocked")

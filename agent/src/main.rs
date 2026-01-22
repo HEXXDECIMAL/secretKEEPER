@@ -99,6 +99,9 @@ async fn run_agent(args: &Args, config: Config) -> Result<()> {
         rule_engine.set_exceptions(exceptions);
     }
 
+    // Wrap rule engine in Arc<RwLock> for sharing between monitor and IPC
+    let rule_engine = Arc::new(RwLock::new(rule_engine));
+
     // Serialize config for IPC
     let config_toml = toml::to_string_pretty(&config).unwrap_or_default();
 
@@ -113,6 +116,7 @@ async fn run_agent(args: &Args, config: Config) -> Result<()> {
         mode.clone(),
         degraded_mode.clone(),
         config_toml,
+        rule_engine.clone(),
     )
     .await?;
     tracing::info!("IPC socket: {}", config.agent.socket_path.display());

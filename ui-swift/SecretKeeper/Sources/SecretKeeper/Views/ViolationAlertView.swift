@@ -4,7 +4,27 @@ struct ViolationAlertView: View {
     @EnvironmentObject var appState: AppState
     let violation: ViolationEvent
     @State private var showAddException = false
+    @State private var actionTaken = false
     @Environment(\.dismiss) private var dismiss
+
+    private func closeWindow(withAction: Bool = true) {
+        if withAction {
+            actionTaken = true
+        }
+        // Clear from pending violations
+        appState.clearPendingViolation(violation.id)
+        // Close the window
+        if let window = NSApp.keyWindow {
+            window.close()
+        }
+    }
+
+    private func handleDismissWithoutAction() {
+        // If no action was taken, mark as dismissed
+        if !actionTaken {
+            appState.recordAction(.dismissed, forViolationId: violation.id)
+        }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -92,13 +112,31 @@ struct ViolationAlertView: View {
 
             // Action buttons
             HStack(spacing: 12) {
-                Button("Kill Process") {
-                    // Kill via IPC
-                    NSApp.sendAction(#selector(AppDelegate.killProcess(_:)), to: nil, from: violation.id)
-                    dismiss()
+                // Kill - terminates the stopped process
+                Button {
+                    if let appDelegate = AppDelegate.shared {
+                        appDelegate.handleKillProcess(eventId: violation.id)
+                    }
+                    closeWindow(withAction: true)
+                } label: {
+                    Label("Kill", systemImage: "xmark.circle.fill")
                 }
                 .buttonStyle(.bordered)
                 .tint(.red)
+                .help("Terminate the stopped process")
+
+                // Resume - allows the process to continue (one-time)
+                Button {
+                    if let appDelegate = AppDelegate.shared {
+                        appDelegate.handleAllowOnce(eventId: violation.id)
+                    }
+                    closeWindow(withAction: true)
+                } label: {
+                    Label("Resume", systemImage: "play.circle.fill")
+                }
+                .buttonStyle(.bordered)
+                .tint(.orange)
+                .help("Allow this process to continue (one-time)")
 
                 Spacer()
 
@@ -106,27 +144,29 @@ struct ViolationAlertView: View {
                     showAddException = true
                 }
                 .buttonStyle(.bordered)
+                .help("Create an exception rule for future access")
 
-                Button("Allow Once") {
-                    // Allow once via IPC
-                    NSApp.sendAction(#selector(AppDelegate.allowOnce(_:)), to: nil, from: violation.id)
-                    dismiss()
-                }
-                .buttonStyle(.bordered)
-                .tint(.orange)
-
-                Button("Always Allow") {
-                    // Allow permanently via IPC
-                    NSApp.sendAction(#selector(AppDelegate.allowPermanently(_:)), to: nil, from: violation.id)
-                    dismiss()
+                // OK - acknowledge and allow permanently
+                Button {
+                    if let appDelegate = AppDelegate.shared {
+                        appDelegate.handleAllowPermanently(eventId: violation.id)
+                    }
+                    closeWindow(withAction: true)
+                } label: {
+                    Label("OK", systemImage: "checkmark.circle.fill")
                 }
                 .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+                .help("Allow this process and add a permanent exception")
             }
             .padding()
         }
         .frame(minWidth: 550, minHeight: 450)
         .sheet(isPresented: $showAddException) {
             AddExceptionSheet(violation: violation)
+        }
+        .onDisappear {
+            handleDismissWithoutAction()
         }
     }
 }
@@ -223,7 +263,7 @@ struct AddExceptionSheet: View {
                     }
                 } else {
                     LabeledContent("Code Signer") {
-                        Text(violation.teamId ?? "Unknown")
+                        Text(codeSignerDescription)
                             .font(.system(.body, design: .monospaced))
                     }
                 }
@@ -268,15 +308,31 @@ struct AddExceptionSheet: View {
         .frame(width: 450)
     }
 
+    private var codeSignerDescription: String {
+        // For Apple platform binaries, show a friendly description
+        if let signingId = violation.signingId {
+            if signingId.hasPrefix("com.apple.") {
+                if let teamId = violation.teamId, !teamId.isEmpty {
+                    return "\(signingId) (Apple)"
+                }
+                return "\(signingId) (Apple)"
+            }
+            // For third-party signed apps
+            if let teamId = violation.teamId, !teamId.isEmpty {
+                return "\(signingId) (\(teamId))"
+            }
+            return signingId
+        }
+        // Fall back to team ID if no signing ID
+        if let teamId = violation.teamId, !teamId.isEmpty {
+            return teamId
+        }
+        return "Unsigned"
+    }
+
     private func addException() {
         // Would call IPC to add exception
         // For now, just dismiss
     }
 }
 
-// Placeholder for AppDelegate actions
-extension AppDelegate {
-    @objc func killProcess(_ sender: Any?) {}
-    @objc func allowOnce(_ sender: Any?) {}
-    @objc func allowPermanently(_ sender: Any?) {}
-}

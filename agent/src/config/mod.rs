@@ -29,7 +29,7 @@ pub fn load_config(path: &Path) -> Result<Config> {
                     source: e,
                 })?;
             config.merge(default_config);
-            tracing::debug!("Loaded default config from {}", default_path.display());
+            tracing::info!("Loaded default config from {}", default_path.display());
         }
     }
 
@@ -40,7 +40,7 @@ pub fn load_config(path: &Path) -> Result<Config> {
         source: e,
     })?;
     config.merge(platform_config);
-    tracing::debug!("Loaded platform config from {}", path.display());
+    tracing::info!("Loaded platform config from {}", path.display());
 
     config.validate()?;
     Ok(config)
@@ -224,5 +224,166 @@ patterns = ["~/.test/*"]
     fn test_default_database_path() {
         let path = default_database_path();
         assert!(path.to_string_lossy().contains("violations.db"));
+    }
+
+    #[test]
+    fn test_load_config_merges_defaults_with_platform_rules() {
+        // Simulate production macOS config that has platform-specific rules
+        // but no ssh_keys - the merge should preserve ssh_keys from defaults
+        let config_content = r#"
+[[global_exclusions]]
+path = "/System/*"
+ppid = 1
+platform_binary = true
+
+[[protected_files]]
+id = "keychain"
+patterns = ["~/Library/Keychains/*.keychain"]
+
+[[protected_files.allow]]
+platform_binary = true
+
+[[protected_files]]
+id = "browser_passwords"
+patterns = ["~/Library/Safari/Passwords.db"]
+
+[[protected_files.allow]]
+base = "Safari"
+"#;
+        let mut file = NamedTempFile::new().unwrap();
+        file.write_all(config_content.as_bytes()).unwrap();
+        file.flush().unwrap();
+
+        let config = load_config(file.path()).unwrap();
+
+        // Platform-specific rules should be present
+        assert!(
+            config.protected_files.iter().any(|p| p.id == "keychain"),
+            "keychain should be present"
+        );
+        assert!(
+            config
+                .protected_files
+                .iter()
+                .any(|p| p.id == "browser_passwords"),
+            "browser_passwords should be present"
+        );
+
+        // Default rules should also be preserved
+        assert!(
+            config.protected_files.iter().any(|p| p.id == "ssh_keys"),
+            "ssh_keys from defaults should be preserved"
+        );
+        assert!(
+            config
+                .protected_files
+                .iter()
+                .any(|p| p.id == "aws_credentials"),
+            "aws_credentials from defaults should be preserved"
+        );
+
+        // Global exclusions from platform config should be present
+        assert!(
+            !config.global_exclusions.is_empty(),
+            "global_exclusions should be present"
+        );
+
+        // Verify the merged config has both sets of protected files
+        let default_count = schema::Config::default().protected_files.len();
+        assert!(
+            config.protected_files.len() >= default_count,
+            "merged config should have at least as many protected files as defaults"
+        );
+    }
+
+    #[test]
+    fn test_ssh_keys_pattern_matches() {
+        // Verify the default ssh_keys patterns work correctly
+        use crate::rules::matches_pattern;
+
+        let config = Config::default();
+        let ssh_keys = config
+            .protected_files
+            .iter()
+            .find(|p| p.id == "ssh_keys")
+            .expect("ssh_keys should exist in defaults");
+
+        // Test patterns match expected SSH key paths
+        assert!(
+            ssh_keys
+                .patterns
+                .iter()
+                .any(|p| matches_pattern(p, "~/.ssh/id_rsa")),
+            "should match id_rsa"
+        );
+        assert!(
+            ssh_keys
+                .patterns
+                .iter()
+                .any(|p| matches_pattern(p, "~/.ssh/id_ed25519")),
+            "should match id_ed25519"
+        );
+        assert!(
+            ssh_keys
+                .patterns
+                .iter()
+                .any(|p| matches_pattern(p, "~/.ssh/id_ed25519_sk")),
+            "should match id_ed25519_sk"
+        );
+        assert!(
+            ssh_keys
+                .patterns
+                .iter()
+                .any(|p| matches_pattern(p, "~/.ssh/id_ecdsa")),
+            "should match id_ecdsa"
+        );
+    }
+
+    /// Test that production config can be loaded (if present) and includes defaults.
+    #[test]
+    fn test_load_production_config_if_present() {
+        let prod_path = Path::new("/Library/Application Support/SecretKeeper/config.toml");
+        if !prod_path.exists() {
+            // Skip test if production config doesn't exist
+            return;
+        }
+
+        let config = load_config(prod_path).expect("should load production config");
+
+        // Production config should have both platform-specific and default rules
+        assert!(
+            config.protected_files.iter().any(|p| p.id == "keychain"),
+            "production config should have keychain (platform-specific)"
+        );
+        assert!(
+            config.protected_files.iter().any(|p| p.id == "ssh_keys"),
+            "production config should preserve ssh_keys from defaults"
+        );
+        assert!(
+            config
+                .protected_files
+                .iter()
+                .any(|p| p.id == "aws_credentials"),
+            "production config should preserve aws_credentials from defaults"
+        );
+
+        // Verify ssh_keys patterns are correct
+        let ssh_keys = config
+            .protected_files
+            .iter()
+            .find(|p| p.id == "ssh_keys")
+            .expect("ssh_keys should exist");
+        assert!(
+            ssh_keys.patterns.contains(&"~/.ssh/id_*".to_string()),
+            "ssh_keys should have id_* pattern"
+        );
+
+        eprintln!(
+            "Production config loaded successfully with {} protected file rules",
+            config.protected_files.len()
+        );
+        for pf in &config.protected_files {
+            eprintln!("  [{}]: {:?}", pf.id, pf.patterns);
+        }
     }
 }

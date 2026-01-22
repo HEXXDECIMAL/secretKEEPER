@@ -1,7 +1,7 @@
 //! Request handlers for IPC commands.
 
-use super::protocol::{Request, Response, ViolationEvent};
-use crate::rules::Exception;
+use super::protocol::{Category, Request, Response, ViolationEvent};
+use crate::rules::{Exception, RuleEngine};
 use crate::storage::{Storage, Violation};
 use chrono::Utc;
 use std::sync::Arc;
@@ -25,6 +25,7 @@ pub struct HandlerState {
     pub connected_clients: RwLock<usize>,
     pub pending_events: RwLock<Vec<ViolationEvent>>,
     pub config_toml: String,
+    pub rule_engine: Arc<RwLock<RuleEngine>>,
 }
 
 impl HandlerState {
@@ -33,6 +34,7 @@ impl HandlerState {
         mode: Arc<RwLock<String>>,
         degraded_mode: Arc<RwLock<bool>>,
         config_toml: String,
+        rule_engine: Arc<RwLock<RuleEngine>>,
     ) -> Self {
         Self {
             storage,
@@ -42,6 +44,7 @@ impl HandlerState {
             connected_clients: RwLock::new(0),
             pending_events: RwLock::new(Vec::new()),
             config_toml,
+            rule_engine,
         }
     }
 
@@ -103,10 +106,40 @@ impl HandlerState {
 
             Request::Kill { event_id } => self.handle_kill(&event_id).await,
 
+            Request::GetCategories => self.handle_get_categories().await,
+
+            Request::SetCategoryEnabled {
+                category_id,
+                enabled,
+            } => {
+                self.handle_set_category_enabled(&category_id, enabled)
+                    .await
+            }
+
             Request::Subscribe { .. } | Request::Unsubscribe => {
                 // Handled at the server level, not here
                 Response::success("OK")
             }
+
+            Request::GetAgentInfo => self.handle_get_agent_info(),
+        }
+    }
+
+    fn handle_get_agent_info(&self) -> Response {
+        // Get the binary modification time
+        let binary_path = std::env::current_exe().unwrap_or_default();
+        let binary_mtime = std::fs::metadata(&binary_path)
+            .and_then(|m| m.modified())
+            .map(|t| {
+                t.duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs() as i64
+            })
+            .unwrap_or(0);
+
+        Response::AgentInfo {
+            binary_mtime,
+            version: env!("CARGO_PKG_VERSION").to_string(),
         }
     }
 
@@ -215,12 +248,13 @@ impl HandlerState {
         if let Some(pos) = pending.iter().position(|e| e.id == event_id) {
             let event = pending.remove(pos);
 
-            // Resume the process if it was suspended
+            // Resume the process and its parent if they were suspended
             #[cfg(unix)]
             {
                 use nix::sys::signal::{kill, Signal};
                 use nix::unistd::Pid;
 
+                // Resume child process
                 match pid_to_raw(event.process_pid) {
                     Some(raw_pid) => {
                         let pid = Pid::from_raw(raw_pid);
@@ -230,6 +264,20 @@ impl HandlerState {
                     }
                     None => {
                         tracing::warn!("PID {} too large for signal operation", event.process_pid);
+                    }
+                }
+
+                // Resume parent process if it was also stopped
+                if let Some(ppid) = event.parent_pid {
+                    if ppid > 1 {
+                        if let Some(raw_ppid) = pid_to_raw(ppid) {
+                            let parent = Pid::from_raw(raw_ppid);
+                            if let Err(e) = kill(parent, Signal::SIGCONT) {
+                                tracing::warn!("Failed to resume parent process {}: {}", ppid, e);
+                            } else {
+                                tracing::info!("Resumed parent process {}", ppid);
+                            }
+                        }
                     }
                 }
             }
@@ -301,6 +349,7 @@ impl HandlerState {
                 use nix::sys::signal::{kill, Signal};
                 use nix::unistd::Pid;
 
+                // Kill child process
                 match pid_to_raw(event.process_pid) {
                     Some(raw_pid) => {
                         let pid = Pid::from_raw(raw_pid);
@@ -318,12 +367,56 @@ impl HandlerState {
                         ));
                     }
                 }
+
+                // Kill parent process if it was also stopped
+                if let Some(ppid) = event.parent_pid {
+                    if ppid > 1 {
+                        if let Some(raw_ppid) = pid_to_raw(ppid) {
+                            let parent = Pid::from_raw(raw_ppid);
+                            if let Err(e) = kill(parent, Signal::SIGKILL) {
+                                tracing::warn!("Failed to kill parent process {}: {}", ppid, e);
+                            } else {
+                                tracing::info!("Killed parent process {}", ppid);
+                            }
+                        }
+                    }
+                }
             }
 
-            Response::success(format!("Killed process {}", event.process_pid))
+            Response::success(format!("Killed process {} and parent", event.process_pid))
         } else {
             Response::error(format!("Event {} not found in pending events", event_id))
         }
+    }
+
+    async fn handle_get_categories(&self) -> Response {
+        let rule_engine = self.rule_engine.read().await;
+        let categories: Vec<Category> = rule_engine
+            .get_categories()
+            .into_iter()
+            .map(|(id, enabled)| {
+                // Get patterns for this category from the protected files
+                let patterns = rule_engine
+                    .protected_files()
+                    .iter()
+                    .find(|pf| pf.id == id)
+                    .map(|pf| pf.patterns.clone())
+                    .unwrap_or_default();
+                Category {
+                    id,
+                    enabled,
+                    patterns,
+                }
+            })
+            .collect();
+        Response::Categories { categories }
+    }
+
+    async fn handle_set_category_enabled(&self, category_id: &str, enabled: bool) -> Response {
+        let mut rule_engine = self.rule_engine.write().await;
+        rule_engine.set_category_enabled(category_id, enabled);
+        let status = if enabled { "enabled" } else { "disabled" };
+        Response::success(format!("Category '{}' {}", category_id, status))
     }
 
     /// Add an event to pending and return it for broadcasting.
@@ -368,18 +461,39 @@ mod tests {
     use tempfile::TempDir;
 
     fn create_test_state() -> (HandlerState, TempDir) {
+        create_test_state_with_protected_files(Vec::new())
+    }
+
+    fn create_test_state_with_protected_files(
+        protected_files: Vec<crate::config::ProtectedFile>,
+    ) -> (HandlerState, TempDir) {
         let temp_dir = TempDir::new().unwrap();
         let db_path = temp_dir.path().join("test.db");
         let storage = Arc::new(Storage::open(&db_path).unwrap());
         let mode = Arc::new(RwLock::new("block".to_string()));
         let degraded_mode = Arc::new(RwLock::new(false));
+        let rule_engine = Arc::new(RwLock::new(RuleEngine::new(protected_files, Vec::new())));
         let state = HandlerState::new(
             storage,
             mode,
             degraded_mode,
             "[agent]\nlog_level = \"info\"".to_string(),
+            rule_engine,
         );
         (state, temp_dir)
+    }
+
+    fn make_test_protected_files() -> Vec<crate::config::ProtectedFile> {
+        use crate::config::ProtectedFile;
+        use crate::rules::AllowRule;
+        vec![ProtectedFile {
+            id: "ssh_keys".to_string(),
+            patterns: vec!["~/.ssh/id_*".to_string()],
+            allow: vec![AllowRule {
+                base: Some("ssh".to_string()),
+                ..Default::default()
+            }],
+        }]
     }
 
     #[test]
@@ -400,7 +514,14 @@ mod tests {
         let storage = Arc::new(Storage::open(&db_path).unwrap());
         let mode = Arc::new(RwLock::new("block".to_string()));
         let degraded_mode = Arc::new(RwLock::new(false));
-        let state = HandlerState::new(storage, mode, degraded_mode, "test config".to_string());
+        let rule_engine = Arc::new(RwLock::new(RuleEngine::new(Vec::new(), Vec::new())));
+        let state = HandlerState::new(
+            storage,
+            mode,
+            degraded_mode,
+            "test config".to_string(),
+            rule_engine,
+        );
 
         assert_eq!(state.config_toml, "test config");
     }
@@ -769,5 +890,116 @@ mod tests {
         assert_eq!(event.process_cmdline, Some("cat ~/.ssh/id_rsa".to_string()));
         assert_eq!(event.team_id, Some("APPLE123".to_string()));
         assert_eq!(event.signing_id, Some("com.apple.cat".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_handle_get_categories() {
+        let (state, _dir) = create_test_state_with_protected_files(make_test_protected_files());
+        let response = state.handle(Request::GetCategories).await;
+
+        match response {
+            Response::Categories { categories } => {
+                assert_eq!(categories.len(), 1);
+                assert_eq!(categories[0].id, "ssh_keys");
+                assert!(categories[0].enabled);
+                assert!(!categories[0].patterns.is_empty());
+            }
+            _ => panic!("Expected Categories response"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_handle_get_categories_empty() {
+        let (state, _dir) = create_test_state();
+        let response = state.handle(Request::GetCategories).await;
+
+        match response {
+            Response::Categories { categories } => {
+                assert!(categories.is_empty());
+            }
+            _ => panic!("Expected Categories response"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_handle_set_category_enabled_disable() {
+        let (state, _dir) = create_test_state_with_protected_files(make_test_protected_files());
+
+        // Disable the category
+        let response = state
+            .handle(Request::SetCategoryEnabled {
+                category_id: "ssh_keys".to_string(),
+                enabled: false,
+            })
+            .await;
+
+        match response {
+            Response::Success { message } => {
+                assert!(message.contains("disabled"));
+            }
+            _ => panic!("Expected Success response"),
+        }
+
+        // Verify it's disabled
+        let response = state.handle(Request::GetCategories).await;
+        match response {
+            Response::Categories { categories } => {
+                assert!(!categories[0].enabled);
+            }
+            _ => panic!("Expected Categories response"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_handle_set_category_enabled_enable() {
+        let (state, _dir) = create_test_state_with_protected_files(make_test_protected_files());
+
+        // First disable
+        state
+            .handle(Request::SetCategoryEnabled {
+                category_id: "ssh_keys".to_string(),
+                enabled: false,
+            })
+            .await;
+
+        // Then re-enable
+        let response = state
+            .handle(Request::SetCategoryEnabled {
+                category_id: "ssh_keys".to_string(),
+                enabled: true,
+            })
+            .await;
+
+        match response {
+            Response::Success { message } => {
+                assert!(message.contains("enabled"));
+            }
+            _ => panic!("Expected Success response"),
+        }
+
+        // Verify it's enabled
+        let response = state.handle(Request::GetCategories).await;
+        match response {
+            Response::Categories { categories } => {
+                assert!(categories[0].enabled);
+            }
+            _ => panic!("Expected Categories response"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_handle_set_category_enabled_nonexistent() {
+        let (state, _dir) = create_test_state_with_protected_files(make_test_protected_files());
+
+        // Try to disable a non-existent category
+        let response = state
+            .handle(Request::SetCategoryEnabled {
+                category_id: "nonexistent_category".to_string(),
+                enabled: false,
+            })
+            .await;
+
+        // Should still succeed (no-op for unknown category)
+        assert!(matches!(response, Response::Success { .. }));
     }
 }

@@ -2,9 +2,20 @@ import Foundation
 
 protocol IPCClientDelegate: AnyObject {
     func ipcClient(_ client: IPCClient, didReceiveViolation violation: ViolationEvent)
+    func ipcClient(_ client: IPCClient, didReceiveViolationHistory violations: [ViolationEvent])
     func ipcClient(_ client: IPCClient, didUpdateStatus status: AgentStatus)
+    func ipcClient(_ client: IPCClient, didReceiveCategories categories: [ProtectedCategory])
+    func ipcClient(_ client: IPCClient, didReceiveAgentInfo info: AgentInfo)
     func ipcClientDidConnect(_ client: IPCClient)
     func ipcClientDidDisconnect(_ client: IPCClient)
+}
+
+/// Agent binary info for auto-upgrade detection.
+struct AgentInfo {
+    /// Binary modification time (Unix timestamp in seconds).
+    let binaryMtime: Int64
+    /// Agent version string.
+    let version: String
 }
 
 /// Client for communicating with the SecretKeeper agent via Unix socket.
@@ -66,11 +77,19 @@ class IPCClient: NSObject {
         var addr = sockaddr_un()
         addr.sun_family = sa_family_t(AF_UNIX)
 
-        // Copy socket path
+        // Copy socket path safely with bounds checking
+        let maxPathLen = MemoryLayout.size(ofValue: addr.sun_path) - 1  // Reserve space for null terminator
+        guard socketPath.utf8.count <= maxPathLen else {
+            print("Socket path too long: \(socketPath.utf8.count) > \(maxPathLen)")
+            close(socketHandle)
+            return
+        }
+
         socketPath.withCString { path in
             withUnsafeMutablePointer(to: &addr.sun_path) { sunPath in
                 let ptr = UnsafeMutableRawPointer(sunPath).assumingMemoryBound(to: CChar.self)
-                strcpy(ptr, path)
+                strncpy(ptr, path, maxPathLen)
+                ptr[maxPathLen] = 0  // Ensure null termination
             }
         }
 
@@ -222,6 +241,21 @@ class IPCClient: NSObject {
         send(PingRequest())
     }
 
+    /// Get all protected categories with their enabled status.
+    func getCategories() {
+        send(GetCategoriesRequest())
+    }
+
+    /// Enable or disable a protected category.
+    func setCategoryEnabled(categoryId: String, enabled: Bool) {
+        send(SetCategoryEnabledRequest(categoryId: categoryId, enabled: enabled))
+    }
+
+    /// Get agent binary info for auto-upgrade detection.
+    func getAgentInfo() {
+        send(GetAgentInfoRequest())
+    }
+
     // MARK: - Private
 
     private func send<T: Encodable>(_ request: T) {
@@ -305,12 +339,17 @@ class IPCClient: NSObject {
         if let status = json["status"] as? String {
             switch status {
             case "event":
-                // Violation event
-                if let eventData = try? JSONSerialization.data(withJSONObject: json),
-                   let response = try? decoder.decode(EventResponse.self, from: eventData) {
-                    DispatchQueue.main.async { [weak self] in
-                        guard let self = self else { return }
-                        self.delegate?.ipcClient(self, didReceiveViolation: response.event)
+                // Violation event - ViolationEvent fields are flattened directly in the JSON
+                if let eventData = try? JSONSerialization.data(withJSONObject: json) {
+                    do {
+                        let violation = try decoder.decode(ViolationEvent.self, from: eventData)
+                        DispatchQueue.main.async { [weak self] in
+                            guard let self = self else { return }
+                            self.delegate?.ipcClient(self, didReceiveViolation: violation)
+                        }
+                    } catch {
+                        fputs("[IPCClient] Failed to decode violation event: \(error)\n", stderr)
+                        fputs("[IPCClient] Raw JSON: \(String(data: eventData, encoding: .utf8) ?? "nil")\n", stderr)
                     }
                 }
 
@@ -324,7 +363,51 @@ class IPCClient: NSObject {
                     }
                 }
 
-            case "success", "error", "pong", "violations", "exceptions", "config":
+            case "categories":
+                // Categories response
+                if let categoriesArray = json["categories"] as? [[String: Any]] {
+                    var categories: [ProtectedCategory] = []
+                    for catDict in categoriesArray {
+                        if let id = catDict["id"] as? String,
+                           let enabled = catDict["enabled"] as? Bool,
+                           let patterns = catDict["patterns"] as? [String] {
+                            categories.append(ProtectedCategory(id: id, enabled: enabled, patterns: patterns))
+                        }
+                    }
+                    DispatchQueue.main.async { [weak self] in
+                        guard let self = self else { return }
+                        self.delegate?.ipcClient(self, didReceiveCategories: categories)
+                    }
+                }
+
+            case "agent_info":
+                // Agent info response for auto-upgrade
+                if let binaryMtime = json["binary_mtime"] as? Int64,
+                   let version = json["version"] as? String {
+                    let info = AgentInfo(binaryMtime: binaryMtime, version: version)
+                    DispatchQueue.main.async { [weak self] in
+                        guard let self = self else { return }
+                        self.delegate?.ipcClient(self, didReceiveAgentInfo: info)
+                    }
+                }
+
+            case "violations":
+                // Violation history response
+                if let eventsArray = json["events"] as? [[String: Any]] {
+                    var violations: [ViolationEvent] = []
+                    for eventDict in eventsArray {
+                        if let eventData = try? JSONSerialization.data(withJSONObject: eventDict),
+                           let violation = try? decoder.decode(ViolationEvent.self, from: eventData) {
+                            violations.append(violation)
+                        }
+                    }
+                    DispatchQueue.main.async { [weak self] in
+                        guard let self = self else { return }
+                        self.delegate?.ipcClient(self, didReceiveViolationHistory: violations)
+                    }
+                }
+
+            case "success", "error", "pong", "exceptions", "config":
                 // Handle other response types as needed
                 break
 
@@ -435,80 +518,23 @@ private struct PingRequest: Codable {
     let action = "ping"
 }
 
-// MARK: - Response Types
+private struct GetCategoriesRequest: Codable {
+    let action = "get_categories"
+}
 
-private struct EventResponse: Codable {
-    let status: String
-    let event: ViolationEvent
+private struct SetCategoryEnabledRequest: Codable {
+    let action = "set_category_enabled"
+    let categoryId: String
+    let enabled: Bool
 
     enum CodingKeys: String, CodingKey {
-        case status
-        case event
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.singleValueContainer()
-        let dict = try container.decode([String: AnyCodable].self)
-
-        status = dict["status"]?.value as? String ?? "event"
-
-        // The event data is in the response itself (minus the status field)
-        var eventDict = dict
-        eventDict.removeValue(forKey: "status")
-
-        let eventData = try JSONSerialization.data(withJSONObject: eventDict.mapValues { $0.value })
-        let eventDecoder = JSONDecoder()
-        eventDecoder.dateDecodingStrategy = .iso8601
-        event = try eventDecoder.decode(ViolationEvent.self, from: eventData)
+        case action
+        case categoryId = "category_id"
+        case enabled
     }
 }
 
-// Helper for decoding arbitrary JSON
-struct AnyCodable: Codable {
-    let value: Any
-
-    init(_ value: Any) {
-        self.value = value
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.singleValueContainer()
-
-        if let bool = try? container.decode(Bool.self) {
-            value = bool
-        } else if let int = try? container.decode(Int.self) {
-            value = int
-        } else if let double = try? container.decode(Double.self) {
-            value = double
-        } else if let string = try? container.decode(String.self) {
-            value = string
-        } else if let array = try? container.decode([AnyCodable].self) {
-            value = array.map { $0.value }
-        } else if let dict = try? container.decode([String: AnyCodable].self) {
-            value = dict.mapValues { $0.value }
-        } else {
-            value = NSNull()
-        }
-    }
-
-    func encode(to encoder: Encoder) throws {
-        var container = encoder.singleValueContainer()
-
-        switch value {
-        case let bool as Bool:
-            try container.encode(bool)
-        case let int as Int:
-            try container.encode(int)
-        case let double as Double:
-            try container.encode(double)
-        case let string as String:
-            try container.encode(string)
-        case let array as [Any]:
-            try container.encode(array.map { AnyCodable($0) })
-        case let dict as [String: Any]:
-            try container.encode(dict.mapValues { AnyCodable($0) })
-        default:
-            try container.encodeNil()
-        }
-    }
+private struct GetAgentInfoRequest: Codable {
+    let action = "get_agent_info"
 }
+

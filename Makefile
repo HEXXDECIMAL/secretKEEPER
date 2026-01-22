@@ -1,4 +1,4 @@
-.PHONY: all build build-release test lint clean install uninstall verify check ui-macos ui-macos-debug ui-linux run-ui run-agent dev
+.PHONY: all build build-release test lint clean install uninstall upgrade verify check ui-macos ui-macos-debug ui-linux run-ui run-agent dev
 
 CARGO := cargo
 INSTALL_DIR := /usr/local/bin
@@ -73,6 +73,43 @@ uninstall-linux:
 	-sudo rm -rf $(CONFIG_DIR_LINUX)
 	@echo "SecretKeeper agent uninstalled"
 
+# Upgrade targets - update binary without losing config
+upgrade-macos: build-release
+	@echo "Upgrading SecretKeeper agent on macOS..."
+	@echo "Stopping agent..."
+	-sudo launchctl unload /Library/LaunchDaemons/com.codegroove.secretkeeper.agent.plist 2>/dev/null || true
+	-sudo pkill -f secretkeeper-agent 2>/dev/null || true
+	@sleep 1
+	@echo "Installing new binary..."
+	sudo cp target/release/secretkeeper-agent /Library/PrivilegedHelperTools/
+	@echo "Starting agent..."
+	@if [ -f /Library/LaunchDaemons/com.codegroove.secretkeeper.agent.plist ]; then \
+		sudo launchctl load /Library/LaunchDaemons/com.codegroove.secretkeeper.agent.plist; \
+	else \
+		sudo cp install/macos/com.codegroove.secretkeeper.agent.plist /Library/LaunchDaemons/; \
+		sudo launchctl load /Library/LaunchDaemons/com.codegroove.secretkeeper.agent.plist; \
+	fi
+	@echo ""
+	@echo "Upgrade complete. Check status with: sudo launchctl list | grep secretkeeper"
+	@echo ""
+	@echo "NOTE: If FDA was revoked, grant it to:"
+	@echo "  /Library/PrivilegedHelperTools/secretkeeper-agent"
+	@echo "Then run: make restart-macos"
+
+restart-macos:
+	@echo "Restarting SecretKeeper agent..."
+	-sudo launchctl unload /Library/LaunchDaemons/com.codegroove.secretkeeper.agent.plist 2>/dev/null || true
+	@sleep 1
+	sudo launchctl load /Library/LaunchDaemons/com.codegroove.secretkeeper.agent.plist
+	@echo "Agent restarted"
+
+upgrade-linux: build-release
+	@echo "Upgrading SecretKeeper agent on Linux..."
+	sudo systemctl stop secretkeeper
+	sudo cp target/release/secretkeeper-agent $(INSTALL_DIR)/
+	sudo systemctl start secretkeeper
+	@echo "Upgrade complete"
+
 # FreeBSD installation
 install-freebsd: build-release
 	@echo "Installing SecretKeeper agent on FreeBSD..."
@@ -119,6 +156,26 @@ else ifeq ($(UNAME),FreeBSD)
 	$(MAKE) uninstall-freebsd
 else
 	@echo "Unsupported platform: $(UNAME)"
+	@exit 1
+endif
+
+upgrade:
+ifeq ($(UNAME),Darwin)
+	$(MAKE) upgrade-macos
+else ifeq ($(UNAME),Linux)
+	$(MAKE) upgrade-linux
+else
+	@echo "Upgrade not yet implemented for $(UNAME)"
+	@exit 1
+endif
+
+restart:
+ifeq ($(UNAME),Darwin)
+	$(MAKE) restart-macos
+else ifeq ($(UNAME),Linux)
+	sudo systemctl restart secretkeeper
+else
+	@echo "Restart not yet implemented for $(UNAME)"
 	@exit 1
 endif
 

@@ -3,6 +3,7 @@
 use super::handlers::HandlerState;
 use super::protocol::{Request, Response, ViolationEvent};
 use crate::error::{Error, Result};
+use crate::rules::RuleEngine;
 use crate::storage::Storage;
 use std::path::Path;
 use std::sync::Arc;
@@ -38,9 +39,9 @@ impl PeerCredentials {
     }
 
     /// Check if peer is authorized for privileged operations.
-    /// Authorized if: root, or same UID as agent (for testing).
+    /// Only root (UID 0) can perform privileged operations like kill, allow, set_mode.
     pub fn is_authorized(&self) -> bool {
-        self.is_root() || self.uid == unsafe { libc::getuid() }
+        self.is_root()
     }
 }
 
@@ -148,6 +149,7 @@ impl IpcServer {
         mode: Arc<RwLock<String>>,
         degraded_mode: Arc<RwLock<bool>>,
         config_toml: String,
+        rule_engine: Arc<RwLock<RuleEngine>>,
     ) -> Result<Self> {
         // Remove existing socket if present
         if socket_path.exists() {
@@ -167,8 +169,11 @@ impl IpcServer {
             }
         })?;
 
-        // Set socket permissions to allow any local user to connect
-        // This is safe because the socket is only accessible locally
+        // Socket permissions allow local users to connect for status/violation viewing.
+        // Security is enforced at the protocol level:
+        // - Privileged operations (kill, allow, set_mode) require root UID
+        // - Non-privileged operations (status, get_violations) are read-only
+        // The socket is in /var/run which is protected from world-write.
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -178,7 +183,13 @@ impl IpcServer {
 
         let (event_tx, _) = broadcast::channel(1000);
 
-        let state = Arc::new(HandlerState::new(storage, mode, degraded_mode, config_toml));
+        let state = Arc::new(HandlerState::new(
+            storage,
+            mode,
+            degraded_mode,
+            config_toml,
+            rule_engine,
+        ));
 
         tracing::info!("IPC server listening on {}", socket_path.display());
 
@@ -388,6 +399,10 @@ mod tests {
     use super::*;
     use tempfile::tempdir;
 
+    fn create_test_rule_engine() -> Arc<RwLock<RuleEngine>> {
+        Arc::new(RwLock::new(RuleEngine::new(Vec::new(), Vec::new())))
+    }
+
     #[tokio::test]
     async fn test_server_creation() {
         let dir = tempdir().unwrap();
@@ -395,9 +410,17 @@ mod tests {
         let storage = Arc::new(Storage::in_memory().unwrap());
         let mode = Arc::new(RwLock::new("block".to_string()));
         let degraded_mode = Arc::new(RwLock::new(false));
+        let rule_engine = create_test_rule_engine();
 
-        let server =
-            IpcServer::new(&socket_path, storage, mode, degraded_mode, String::new()).await;
+        let server = IpcServer::new(
+            &socket_path,
+            storage,
+            mode,
+            degraded_mode,
+            String::new(),
+            rule_engine,
+        )
+        .await;
         assert!(server.is_ok());
         assert!(socket_path.exists());
     }
@@ -421,7 +444,7 @@ mod tests {
 
     #[test]
     fn test_peer_credentials_is_authorized() {
-        // Root is always authorized
+        // Root is authorized
         let root_creds = PeerCredentials {
             pid: 1,
             uid: 0,
@@ -429,25 +452,20 @@ mod tests {
         };
         assert!(root_creds.is_authorized());
 
-        // Same UID as current process is authorized
-        let current_uid = unsafe { libc::getuid() };
-        let same_user_creds = PeerCredentials {
+        // Non-root users are not authorized for privileged operations
+        let user_creds = PeerCredentials {
             pid: 1234,
-            uid: current_uid,
+            uid: 501,
             gid: 20,
         };
-        assert!(same_user_creds.is_authorized());
+        assert!(!user_creds.is_authorized());
 
-        // Different non-root UID is not authorized (unless it's current user)
         let other_user_creds = PeerCredentials {
             pid: 1234,
             uid: 99999,
             gid: 99999,
         };
-        // This will be false unless running as UID 99999
-        if current_uid != 99999 {
-            assert!(!other_user_creds.is_authorized());
-        }
+        assert!(!other_user_creds.is_authorized());
     }
 
     #[test]
@@ -499,6 +517,7 @@ mod tests {
         let storage = Arc::new(Storage::in_memory().unwrap());
         let mode = Arc::new(RwLock::new("block".to_string()));
         let degraded_mode = Arc::new(RwLock::new(false));
+        let rule_engine = create_test_rule_engine();
 
         let server = IpcServer::new(
             &socket_path,
@@ -506,6 +525,7 @@ mod tests {
             mode,
             degraded_mode,
             "test config".to_string(),
+            rule_engine,
         )
         .await
         .unwrap();
@@ -523,6 +543,7 @@ mod tests {
         let storage = Arc::new(Storage::in_memory().unwrap());
         let mode = Arc::new(RwLock::new("block".to_string()));
         let degraded_mode = Arc::new(RwLock::new(false));
+        let rule_engine = create_test_rule_engine();
 
         let server = IpcServer::new(
             &socket_path,
@@ -530,6 +551,7 @@ mod tests {
             mode,
             degraded_mode,
             "test config".to_string(),
+            rule_engine,
         )
         .await
         .unwrap();
@@ -550,8 +572,16 @@ mod tests {
         let storage = Arc::new(Storage::in_memory().unwrap());
         let mode = Arc::new(RwLock::new("block".to_string()));
         let degraded_mode = Arc::new(RwLock::new(false));
-        let server =
-            IpcServer::new(&socket_path, storage, mode, degraded_mode, String::new()).await;
+        let rule_engine = create_test_rule_engine();
+        let server = IpcServer::new(
+            &socket_path,
+            storage,
+            mode,
+            degraded_mode,
+            String::new(),
+            rule_engine,
+        )
+        .await;
 
         // Should succeed and replace the existing file
         assert!(server.is_ok());
@@ -569,8 +599,16 @@ mod tests {
         let storage = Arc::new(Storage::in_memory().unwrap());
         let mode = Arc::new(RwLock::new("block".to_string()));
         let degraded_mode = Arc::new(RwLock::new(false));
-        let server =
-            IpcServer::new(&socket_path, storage, mode, degraded_mode, String::new()).await;
+        let rule_engine = create_test_rule_engine();
+        let server = IpcServer::new(
+            &socket_path,
+            storage,
+            mode,
+            degraded_mode,
+            String::new(),
+            rule_engine,
+        )
+        .await;
 
         // Should create parent dirs and succeed
         assert!(server.is_ok());

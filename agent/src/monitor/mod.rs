@@ -24,7 +24,7 @@ mod freebsd_dtrace;
 use crate::config::Config;
 use crate::error::{Error, Result};
 use crate::ipc::ViolationEvent;
-use crate::process::{build_process_tree, ProcessContext};
+use crate::process::{build_process_tree, ProcessContext, ProcessTreeEntry};
 use crate::rules::{Decision, RuleEngine};
 use crate::storage::{Storage, Violation};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -195,7 +195,7 @@ pub struct EventStatsSnapshot {
 /// Shared context for monitors.
 pub struct MonitorContext {
     pub config: Config,
-    pub rule_engine: RuleEngine,
+    pub rule_engine: Arc<tokio::sync::RwLock<RuleEngine>>,
     pub storage: Arc<Storage>,
     pub event_tx: broadcast::Sender<ViolationEvent>,
     pub mode: Arc<tokio::sync::RwLock<String>>,
@@ -208,7 +208,7 @@ impl MonitorContext {
     /// Create a new monitor context.
     pub fn new(
         config: Config,
-        rule_engine: RuleEngine,
+        rule_engine: Arc<tokio::sync::RwLock<RuleEngine>>,
         storage: Arc<Storage>,
         event_tx: broadcast::Sender<ViolationEvent>,
         mode: Arc<tokio::sync::RwLock<String>>,
@@ -236,37 +236,41 @@ impl MonitorContext {
         // Track that we received an event
         self.stats.events_received.fetch_add(1, Ordering::Relaxed);
 
-        // Check rate limit first
-        if !self.rate_limiter.check().await {
-            self.stats.rate_limited.fetch_add(1, Ordering::Relaxed);
-            tracing::trace!("Rate limit exceeded, dropping event for {}", file_path);
-            return None;
-        }
-
-        // Check if file is excluded
+        // Check if file is excluded first (fast path)
         if self.config.is_excluded(file_path) {
             tracing::trace!("File {} is excluded", file_path);
             return None;
         }
 
-        // Extra debug logging for SSH files
+        // Quick check if this file is protected - protected files bypass rate limiting
+        let rule_engine = self.rule_engine.read().await;
+        let is_protected = rule_engine.is_protected(file_path);
         let is_ssh_file = file_path.contains(".ssh");
-        if is_ssh_file {
-            tracing::debug!(
-                "Evaluating SSH file access: path={}, process={}",
-                file_path,
-                context.path.display()
-            );
+        drop(rule_engine);
+
+        // Apply rate limiting only to non-protected files
+        // Protected files (SSH keys, AWS creds, etc.) should NEVER be rate limited
+        if !is_protected {
+            if !self.rate_limiter.check().await {
+                self.stats.rate_limited.fetch_add(1, Ordering::Relaxed);
+                tracing::trace!("Rate limit exceeded, dropping event for {}", file_path);
+                return None;
+            }
+            // Not protected, nothing more to do
+            return None;
         }
 
+        // This is a protected file - always process it
+        self.stats.protected_checks.fetch_add(1, Ordering::Relaxed);
+
         // Evaluate rules with debug mode for SSH files
-        let decision = self
-            .rule_engine
-            .evaluate_with_debug(context, file_path, is_ssh_file);
+        let rule_engine = self.rule_engine.read().await;
+        let decision = rule_engine.evaluate_with_debug(context, file_path, is_ssh_file);
+        let rule_id = rule_engine.get_rule_id(file_path).map(|s| s.to_string());
+        drop(rule_engine); // Release lock early
 
         match decision {
             Decision::Allow => {
-                self.stats.protected_checks.fetch_add(1, Ordering::Relaxed);
                 self.stats.allowed.fetch_add(1, Ordering::Relaxed);
                 tracing::trace!(
                     "Allowed: {} accessing {}",
@@ -276,11 +280,11 @@ impl MonitorContext {
                 None
             }
             Decision::NotProtected => {
+                // Shouldn't happen since we checked is_protected above, but handle gracefully
                 tracing::trace!("File {} is not protected", file_path);
                 None
             }
             Decision::Deny => {
-                self.stats.protected_checks.fetch_add(1, Ordering::Relaxed);
                 self.stats.violations.fetch_add(1, Ordering::Relaxed);
                 let mode = self.mode.read().await;
                 let action = match mode.as_str() {
@@ -296,8 +300,9 @@ impl MonitorContext {
                     action
                 );
 
-                // Build process tree
-                let tree = context.pid.map(build_process_tree).unwrap_or_default();
+                // Build process tree - start with the violating process from event data
+                // (since short-lived processes like `cat` may exit before we can query them)
+                let tree = build_tree_from_context(context);
 
                 // Create violation record with all context
                 let violation = Violation::new(
@@ -306,7 +311,7 @@ impl MonitorContext {
                     context.pid.unwrap_or(0),
                     action,
                 )
-                .with_rule_id(self.rule_engine.get_rule_id(file_path).unwrap_or("unknown"))
+                .with_rule_id(rule_id.as_deref().unwrap_or("unknown"))
                 .with_process_tree(tree.clone())
                 .with_ppid_opt(context.ppid)
                 .with_euid_opt(context.euid)
@@ -344,15 +349,37 @@ impl MonitorContext {
         }
     }
 
-    /// Suspend a process (for blocking mode on macOS).
+    /// Suspend a process and optionally its parent (for blocking mode on macOS).
+    /// Stopping both prevents the parent from spawning more malicious children.
     #[cfg(unix)]
-    pub fn suspend_process(&self, pid: u32) -> Result<()> {
+    pub fn suspend_process(&self, pid: u32, ppid: Option<u32>) -> Result<()> {
         use nix::sys::signal::{kill, Signal};
         use nix::unistd::Pid;
 
-        let pid = Pid::from_raw(pid as i32);
-        kill(pid, Signal::SIGSTOP)
-            .map_err(|e| Error::monitor(format!("Failed to suspend process: {}", e)))
+        // Stop the child process first
+        let child_pid = Pid::from_raw(pid as i32);
+        kill(child_pid, Signal::SIGSTOP).map_err(|e| {
+            Error::monitor(format!("Failed to suspend child process {}: {}", pid, e))
+        })?;
+
+        // Also stop the parent if provided and it's not init/launchd
+        if let Some(parent) = ppid {
+            if parent > 1 {
+                let parent_pid = Pid::from_raw(parent as i32);
+                if let Err(e) = kill(parent_pid, Signal::SIGSTOP) {
+                    // Log but don't fail - parent may have exited
+                    tracing::warn!("Failed to suspend parent process {}: {}", parent, e);
+                } else {
+                    tracing::info!(
+                        "Suspended parent process {} along with child {}",
+                        parent,
+                        pid
+                    );
+                }
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -392,6 +419,49 @@ pub fn create_monitor(
     {
         Err(Error::UnsupportedPlatform(std::env::consts::OS.to_string()))
     }
+}
+
+/// Build process tree from ProcessContext.
+/// Creates the first entry from the context (since the process may have exited),
+/// then builds the parent chain by querying the system.
+fn build_tree_from_context(context: &ProcessContext) -> Vec<ProcessTreeEntry> {
+    let mut tree = Vec::new();
+
+    // Create entry for the violating process from the event data we already have
+    // This is important because short-lived processes (cat, grep, etc.) may exit
+    // before we can query /proc or ps for their info
+    let process_name = context
+        .path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
+
+    let first_entry = ProcessTreeEntry {
+        pid: context.pid.unwrap_or(0),
+        ppid: context.ppid,
+        name: process_name,
+        path: context.path.to_string_lossy().to_string(),
+        cwd: None, // Not available from eslogger
+        cmdline: context.args.as_ref().map(|a| a.join(" ")),
+        uid: context.euid, // eslogger gives us euid
+        euid: context.euid,
+        team_id: context.team_id.clone(),
+        signing_id: context.signing_id.clone(),
+        is_platform_binary: context.platform_binary.unwrap_or(false),
+        is_stopped: false,
+    };
+    tree.push(first_entry);
+
+    // Now build the rest of the tree from the parent PID
+    // The parent should still be running (e.g., shell, terminal)
+    if let Some(ppid) = context.ppid {
+        if ppid > 0 {
+            let parent_tree = build_process_tree(ppid);
+            tree.extend(parent_tree);
+        }
+    }
+
+    tree
 }
 
 /// Expand ~ to home directory in a path pattern.
@@ -535,7 +605,10 @@ mod tests {
         let db_path = temp_dir.path().join("test.db");
         let storage = Arc::new(Storage::open(&db_path).unwrap());
         let config = Config::default();
-        let rule_engine = RuleEngine::new(Vec::new(), Vec::new());
+        let rule_engine = Arc::new(tokio::sync::RwLock::new(RuleEngine::new(
+            Vec::new(),
+            Vec::new(),
+        )));
         let (event_tx, _rx) = broadcast::channel(100);
         let mode = Arc::new(tokio::sync::RwLock::new("block".to_string()));
         let degraded_mode = Arc::new(tokio::sync::RwLock::new(false));
@@ -571,7 +644,10 @@ mod tests {
         };
         config.protected_files.push(protected.clone());
 
-        let rule_engine = RuleEngine::new(vec![protected], Vec::new());
+        let rule_engine = Arc::new(tokio::sync::RwLock::new(RuleEngine::new(
+            vec![protected],
+            Vec::new(),
+        )));
         let (event_tx, _rx) = broadcast::channel(100);
         let mode = Arc::new(tokio::sync::RwLock::new("block".to_string()));
         let degraded_mode = Arc::new(tokio::sync::RwLock::new(false));
@@ -605,7 +681,10 @@ mod tests {
         };
         config.protected_files.push(protected.clone());
 
-        let rule_engine = RuleEngine::new(vec![protected], Vec::new());
+        let rule_engine = Arc::new(tokio::sync::RwLock::new(RuleEngine::new(
+            vec![protected],
+            Vec::new(),
+        )));
         let (event_tx, _rx) = broadcast::channel(100);
         let mode = Arc::new(tokio::sync::RwLock::new("block".to_string()));
         let degraded_mode = Arc::new(tokio::sync::RwLock::new(false));
@@ -637,7 +716,10 @@ mod tests {
         let mut config = Config::default();
         config.excluded_patterns.push("/tmp/*".to_string());
 
-        let rule_engine = RuleEngine::new(Vec::new(), Vec::new());
+        let rule_engine = Arc::new(tokio::sync::RwLock::new(RuleEngine::new(
+            Vec::new(),
+            Vec::new(),
+        )));
         let (event_tx, _rx) = broadcast::channel(100);
         let mode = Arc::new(tokio::sync::RwLock::new("block".to_string()));
         let degraded_mode = Arc::new(tokio::sync::RwLock::new(false));
@@ -670,7 +752,10 @@ mod tests {
         };
         config.protected_files.push(protected.clone());
 
-        let rule_engine = RuleEngine::new(vec![protected], Vec::new());
+        let rule_engine = Arc::new(tokio::sync::RwLock::new(RuleEngine::new(
+            vec![protected],
+            Vec::new(),
+        )));
         let (event_tx, _rx) = broadcast::channel(100);
         let mode = Arc::new(tokio::sync::RwLock::new("monitor".to_string())); // Not block mode
         let degraded_mode = Arc::new(tokio::sync::RwLock::new(false));
@@ -698,7 +783,10 @@ mod tests {
             let db_path = temp_dir.path().join("test.db");
             let storage = Arc::new(Storage::open(&db_path).unwrap());
             let config = Config::default();
-            let rule_engine = RuleEngine::new(Vec::new(), Vec::new());
+            let rule_engine = Arc::new(tokio::sync::RwLock::new(RuleEngine::new(
+                Vec::new(),
+                Vec::new(),
+            )));
             let (event_tx, _rx) = broadcast::channel(100);
             let mode = Arc::new(tokio::sync::RwLock::new("block".to_string()));
             let degraded_mode = Arc::new(tokio::sync::RwLock::new(false));

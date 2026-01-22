@@ -46,7 +46,7 @@ struct SettingsView: View {
                 }
                 .tag(SettingsTab.advanced)
         }
-        .frame(width: 550, height: 400)
+        .frame(width: 550, height: 550)
     }
 }
 
@@ -130,24 +130,30 @@ struct ProtectionSettingsView: View {
     var body: some View {
         Form {
             Section("Protected File Categories") {
-                ForEach(ProtectedCategory.allCases, id: \.self) { category in
-                    ProtectedCategoryRow(category: category)
+                if appState.categories.isEmpty {
+                    Text("Loading categories...")
+                        .foregroundColor(.secondary)
+                } else {
+                    ForEach(appState.categories) { category in
+                        ProtectedCategoryRow(category: category)
+                    }
                 }
             }
 
             Section("Global Exclusions") {
-                Text("Processes matching these patterns are always allowed.")
+                Text("Processes matching these patterns are always allowed to access protected files.")
                     .font(.caption)
                     .foregroundColor(.secondary)
 
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("/usr/bin/ssh")
-                    Text("/usr/bin/scp")
-                    Text("/usr/bin/git")
-                    Text("/Applications/1Password*.app/**")
+                Text("Global exclusions are configured in the config file. Add entries under [global_exclusions] to allow specific processes.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .padding(.top, 4)
+
+                Button("Edit Configuration File") {
+                    NSWorkspace.shared.open(URL(fileURLWithPath: "/Library/Application Support/SecretKeeper/config.toml"))
                 }
-                .font(.system(.body, design: .monospaced))
-                .foregroundColor(.secondary)
+                .padding(.top, 4)
             }
         }
         .formStyle(.grouped)
@@ -155,51 +161,46 @@ struct ProtectionSettingsView: View {
     }
 }
 
-enum ProtectedCategory: String, CaseIterable {
-    case sshKeys = "SSH Keys"
-    case awsCredentials = "AWS Credentials"
-    case gcpCredentials = "GCP Credentials"
-    case kubeconfig = "Kubernetes Config"
-    case gpgKeys = "GPG Keys"
-    case npmTokens = "NPM Tokens"
-    case gitCredentials = "Git Credentials"
-
-    var icon: String {
-        switch self {
-        case .sshKeys: return "key"
-        case .awsCredentials: return "cloud"
-        case .gcpCredentials: return "cloud"
-        case .kubeconfig: return "server.rack"
-        case .gpgKeys: return "lock.shield"
-        case .npmTokens: return "shippingbox"
-        case .gitCredentials: return "arrow.triangle.branch"
-        }
-    }
-
-    var patterns: [String] {
-        switch self {
-        case .sshKeys: return ["~/.ssh/id_*", "~/.ssh/*_key"]
-        case .awsCredentials: return ["~/.aws/credentials", "~/.aws/config"]
-        case .gcpCredentials: return ["~/.config/gcloud/credentials.db", "~/.config/gcloud/application_default_credentials.json"]
-        case .kubeconfig: return ["~/.kube/config"]
-        case .gpgKeys: return ["~/.gnupg/private-keys-v1.d/*"]
-        case .npmTokens: return ["~/.npmrc"]
-        case .gitCredentials: return ["~/.git-credentials"]
-        }
-    }
-}
-
 struct ProtectedCategoryRow: View {
+    @EnvironmentObject var appState: AppState
     let category: ProtectedCategory
-    @State private var isEnabled = true
+
+    private var isEnabled: Binding<Bool> {
+        Binding(
+            get: { category.enabled },
+            set: { newValue in
+                // Update local state
+                appState.setCategoryEnabled(category.id, enabled: newValue)
+                // Send IPC command
+                if let appDelegate = AppDelegate.shared,
+                   let ipcClient = appDelegate.ipcClient {
+                    ipcClient.setCategoryEnabled(categoryId: category.id, enabled: newValue)
+                }
+                fputs("[Settings] Category '\(category.id)' \(newValue ? "enabled" : "disabled")\n", stderr)
+            }
+        )
+    }
+
+    private var icon: String {
+        switch category.id {
+        case "ssh_keys": return "key"
+        case "aws_credentials": return "cloud"
+        case "gcp_credentials": return "cloud"
+        case "kubeconfig": return "server.rack"
+        case "gpg_keys": return "lock.shield"
+        case "npm_tokens": return "shippingbox"
+        case "git_credentials": return "arrow.triangle.branch"
+        default: return "doc.badge.gearshape"
+        }
+    }
 
     var body: some View {
-        Toggle(isOn: $isEnabled) {
+        Toggle(isOn: isEnabled) {
             HStack {
-                Image(systemName: category.icon)
+                Image(systemName: icon)
                     .frame(width: 20)
                 VStack(alignment: .leading) {
-                    Text(category.rawValue)
+                    Text(category.id.replacingOccurrences(of: "_", with: " ").capitalized)
                     Text(category.patterns.joined(separator: ", "))
                         .font(.caption)
                         .foregroundColor(.secondary)

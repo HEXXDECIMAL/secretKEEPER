@@ -224,7 +224,7 @@ fn default_buffer_size() -> usize {
 }
 
 fn default_max_events_per_sec() -> u32 {
-    100
+    1900
 }
 
 /// Enforcement configuration.
@@ -663,7 +663,7 @@ comment = "Deployment tool"
         assert_eq!(config.agent.log_level, "info");
         assert_eq!(config.monitoring.mechanism, "auto");
         assert_eq!(config.monitoring.buffer_size, 1000);
-        assert_eq!(config.monitoring.max_events_per_sec, 100);
+        assert_eq!(config.monitoring.max_events_per_sec, 1900);
         assert_eq!(config.enforcement.mode, "block");
         assert!(!config.enforcement.suspend_parent);
         assert_eq!(config.enforcement.history_retention_days, 30);

@@ -53,10 +53,17 @@ impl super::Monitor for EsloggerMonitor {
 
         tracing::info!("Started eslogger process with PID: {:?}", child.id());
 
-        let stdout = child
-            .stdout
-            .take()
-            .ok_or_else(|| Error::monitor("Failed to capture eslogger stdout"))?;
+        // Take stdout - if this fails, kill the child process to prevent leak
+        let stdout = match child.stdout.take() {
+            Some(stdout) => stdout,
+            None => {
+                // Kill the orphaned child process before returning error
+                if let Err(e) = child.kill().await {
+                    tracing::warn!("Failed to kill orphaned eslogger process: {}", e);
+                }
+                return Err(Error::monitor("Failed to capture eslogger stdout"));
+            }
+        };
 
         let stderr = child.stderr.take();
 
@@ -187,17 +194,18 @@ impl super::Monitor for EsloggerMonitor {
                                 violation.action
                             );
 
-                            // If in block or best-effort mode, try to suspend the process
+                            // If in block or best-effort mode, suspend process and parent
                             let mode = self.context.mode.read().await;
                             if mode.as_str() == "block" || mode.as_str() == "best-effort" {
                                 if let Some(pid) = context.pid {
-                                    if let Err(e) = self.context.suspend_process(pid) {
+                                    if let Err(e) = self.context.suspend_process(pid, context.ppid)
+                                    {
                                         tracing::warn!("Failed to suspend process {}: {}", pid, e);
                                     } else if mode.as_str() == "best-effort" {
-                                        tracing::info!("Best-effort: stopped process {} (file may have been accessed)", pid);
+                                        tracing::info!("Best-effort: stopped process {} and parent (file may have been accessed)", pid);
                                     } else {
                                         tracing::info!(
-                                            "Suspended process {} pending user decision",
+                                            "Suspended process {} and parent pending user decision",
                                             pid
                                         );
                                     }
@@ -207,7 +215,7 @@ impl super::Monitor for EsloggerMonitor {
                     }
                 }
                 Err(e) => {
-                    tracing::trace!("Failed to parse eslogger event: {}", e);
+                    tracing::debug!("Failed to parse eslogger event: {}", e);
                 }
             }
         }
@@ -380,7 +388,10 @@ mod tests {
         let db_path = temp_dir.path().join("test.db");
         let storage = Arc::new(Storage::open(&db_path).unwrap());
         let config = Config::default();
-        let rule_engine = RuleEngine::new(Vec::new(), Vec::new());
+        let rule_engine = Arc::new(tokio::sync::RwLock::new(RuleEngine::new(
+            Vec::new(),
+            Vec::new(),
+        )));
         let (event_tx, _rx) = broadcast::channel(100);
         let mode = Arc::new(tokio::sync::RwLock::new("block".to_string()));
         let degraded_mode = Arc::new(tokio::sync::RwLock::new(false));

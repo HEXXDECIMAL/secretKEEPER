@@ -76,8 +76,17 @@ pub enum Request {
     /// Get current configuration (as TOML).
     GetConfig,
 
+    /// Get all protected categories with their enabled status.
+    GetCategories,
+
+    /// Enable or disable a protected category.
+    SetCategoryEnabled { category_id: String, enabled: bool },
+
     /// Ping for health check.
     Ping,
+
+    /// Get agent binary info (for auto-upgrade detection).
+    GetAgentInfo,
 }
 
 /// Filter for event subscription.
@@ -135,8 +144,30 @@ pub enum Response {
     /// Configuration response.
     Config { toml: String },
 
+    /// Protected categories response.
+    Categories { categories: Vec<Category> },
+
     /// Pong response to ping.
     Pong,
+
+    /// Agent info response.
+    AgentInfo {
+        /// Binary modification time (Unix timestamp in seconds).
+        binary_mtime: i64,
+        /// Agent version string.
+        version: String,
+    },
+}
+
+/// A protected file category.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Category {
+    /// Category ID (e.g., "ssh_keys").
+    pub id: String,
+    /// Whether the category is currently enabled.
+    pub enabled: bool,
+    /// File patterns this category protects.
+    pub patterns: Vec<String>,
 }
 
 #[allow(dead_code)]

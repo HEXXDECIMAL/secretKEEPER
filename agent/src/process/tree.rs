@@ -33,6 +33,9 @@ pub struct ProcessTreeEntry {
     pub team_id: Option<String>,
     pub signing_id: Option<String>,
     pub is_platform_binary: bool,
+    /// Whether this process is currently stopped (SIGSTOP).
+    #[serde(default)]
+    pub is_stopped: bool,
 }
 
 /// Build complete process tree from PID up to init (PID 1).
@@ -103,6 +106,9 @@ fn get_process_info(pid: u32) -> Option<ProcessTreeEntry> {
     // Get CWD
     let cwd = get_cwd_macos(pid);
 
+    // Check if process is stopped
+    let is_stopped = is_process_stopped_macos(pid);
+
     Some(ProcessTreeEntry {
         pid,
         ppid,
@@ -115,7 +121,28 @@ fn get_process_info(pid: u32) -> Option<ProcessTreeEntry> {
         team_id,
         signing_id,
         is_platform_binary: is_platform,
+        is_stopped,
     })
+}
+
+#[cfg(target_os = "macos")]
+fn is_process_stopped_macos(pid: u32) -> bool {
+    use std::process::Command;
+
+    // Use ps to get process state
+    let output = Command::new(paths::PS)
+        .args(["-p", &pid.to_string(), "-o", "state="])
+        .output()
+        .ok();
+
+    if let Some(output) = output {
+        if output.status.success() {
+            let state = String::from_utf8_lossy(&output.stdout);
+            // 'T' indicates stopped process (SIGSTOP)
+            return state.trim().starts_with('T');
+        }
+    }
+    false
 }
 
 #[cfg(target_os = "macos")]
@@ -245,6 +272,19 @@ fn get_process_info(pid: u32) -> Option<ProcessTreeEntry> {
         .ok()
         .map(|p| p.to_string_lossy().to_string());
 
+    // Check if process is stopped by looking at /proc/{pid}/stat
+    let is_stopped = std::fs::read_to_string(format!("{}/stat", proc_path))
+        .ok()
+        .map(|stat| {
+            // Format: pid (comm) state ...
+            // State T = stopped
+            stat.split(')')
+                .nth(1)
+                .map(|s| s.trim().starts_with('T'))
+                .unwrap_or(false)
+        })
+        .unwrap_or(false);
+
     Some(ProcessTreeEntry {
         pid,
         ppid,
@@ -257,6 +297,7 @@ fn get_process_info(pid: u32) -> Option<ProcessTreeEntry> {
         team_id: None,
         signing_id: None,
         is_platform_binary: false,
+        is_stopped,
     })
 }
 
@@ -337,6 +378,20 @@ fn get_process_info(pid: u32) -> Option<ProcessTreeEntry> {
         })
         .unwrap_or_else(|| PathBuf::from(&name));
 
+    // Check if process is stopped using ps
+    let is_stopped = Command::new(paths::PS)
+        .args(["-p", &pid.to_string(), "-o", "state="])
+        .output()
+        .ok()
+        .map(|o| {
+            if o.status.success() {
+                String::from_utf8_lossy(&o.stdout).trim().starts_with('T')
+            } else {
+                false
+            }
+        })
+        .unwrap_or(false);
+
     Some(ProcessTreeEntry {
         pid,
         ppid,
@@ -349,6 +404,7 @@ fn get_process_info(pid: u32) -> Option<ProcessTreeEntry> {
         team_id: None,
         signing_id: None,
         is_platform_binary: false,
+        is_stopped,
     })
 }
 
@@ -373,5 +429,83 @@ mod tests {
         // Should end at init (pid 1)
         let last = tree.last().unwrap();
         assert!(last.pid == 1 || last.ppid == Some(0) || last.ppid.is_none());
+    }
+
+    #[test]
+    fn test_process_tree_entry_serialize() {
+        let entry = ProcessTreeEntry {
+            pid: 1234,
+            ppid: Some(1),
+            name: "test".to_string(),
+            path: "/usr/bin/test".to_string(),
+            cwd: Some("/home/user".to_string()),
+            cmdline: Some("test --arg".to_string()),
+            uid: Some(501),
+            euid: Some(501),
+            team_id: Some("TEAM123".to_string()),
+            signing_id: Some("com.example.test".to_string()),
+            is_platform_binary: false,
+            is_stopped: true,
+        };
+
+        let json = serde_json::to_string(&entry).unwrap();
+        assert!(json.contains("\"is_stopped\":true"));
+        assert!(json.contains("\"pid\":1234"));
+        assert!(json.contains("\"team_id\":\"TEAM123\""));
+    }
+
+    #[test]
+    fn test_process_tree_entry_deserialize() {
+        let json = r#"{
+            "pid": 5678,
+            "ppid": 1,
+            "name": "cat",
+            "path": "/bin/cat",
+            "cwd": "/tmp",
+            "cmdline": "cat file.txt",
+            "uid": 0,
+            "euid": 0,
+            "team_id": null,
+            "signing_id": "com.apple.cat",
+            "is_platform_binary": true,
+            "is_stopped": false
+        }"#;
+
+        let entry: ProcessTreeEntry = serde_json::from_str(json).unwrap();
+        assert_eq!(entry.pid, 5678);
+        assert_eq!(entry.ppid, Some(1));
+        assert!(entry.is_platform_binary);
+        assert!(!entry.is_stopped);
+    }
+
+    #[test]
+    fn test_process_tree_entry_deserialize_defaults() {
+        // Test that is_stopped defaults to false when not present
+        let json = r#"{
+            "pid": 999,
+            "ppid": null,
+            "name": "init",
+            "path": "/sbin/init",
+            "cwd": null,
+            "cmdline": null,
+            "uid": null,
+            "euid": null,
+            "team_id": null,
+            "signing_id": null,
+            "is_platform_binary": false
+        }"#;
+
+        let entry: ProcessTreeEntry = serde_json::from_str(json).unwrap();
+        assert_eq!(entry.pid, 999);
+        assert!(!entry.is_stopped); // defaults to false
+    }
+
+    #[test]
+    fn test_current_process_not_stopped() {
+        let pid = std::process::id();
+        let tree = build_process_tree(pid);
+
+        // Our own process should not be stopped
+        assert!(!tree[0].is_stopped);
     }
 }

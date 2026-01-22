@@ -164,10 +164,18 @@ class AgentManager {
         var addr = sockaddr_un()
         addr.sun_family = sa_family_t(AF_UNIX)
 
+        // Copy socket path safely with bounds checking
+        let maxPathLen = MemoryLayout.size(ofValue: addr.sun_path) - 1  // Reserve space for null terminator
+        guard socketPath.utf8.count <= maxPathLen else {
+            logger.error("Socket path too long: \(socketPath.utf8.count) > \(maxPathLen)")
+            return false
+        }
+
         socketPath.withCString { path in
             withUnsafeMutablePointer(to: &addr.sun_path) { sunPath in
                 let ptr = UnsafeMutableRawPointer(sunPath).assumingMemoryBound(to: CChar.self)
-                strcpy(ptr, path)
+                strncpy(ptr, path, maxPathLen)
+                ptr[maxPathLen] = 0  // Ensure null termination
             }
         }
 
@@ -473,26 +481,10 @@ class AgentManager {
     func restartAgent(completion: @escaping (Result<Void, AgentManagerError>) -> Void) {
         logger.info("=== Restarting agent ===")
 
-        // Stop the agent first, then start it
-        stopAgent { [weak self] stopResult in
-            guard let self = self else {
-                completion(.failure(.installFailed("Agent manager was deallocated")))
-                return
-            }
-
-            switch stopResult {
-            case .success:
-                self.logger.info("Agent stopped, now starting...")
-                // Small delay to ensure clean shutdown
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                    self.startAgent(completion: completion)
-                }
-            case .failure(let error):
-                self.logger.warning("Stop failed (\(error.localizedDescription)), attempting start anyway...")
-                // Try to start anyway - maybe it wasn't running
-                self.startAgent(completion: completion)
-            }
-        }
+        // startAgent() already includes launchctl unload at the beginning of its script,
+        // so we can just call it directly without a separate stopAgent() call.
+        // This avoids prompting for admin password twice.
+        startAgent(completion: completion)
     }
 
     // MARK: - Private

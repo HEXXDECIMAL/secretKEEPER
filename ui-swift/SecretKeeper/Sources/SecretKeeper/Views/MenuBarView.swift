@@ -6,6 +6,7 @@ extension Notification.Name {
 
 struct MenuBarView: View {
     @EnvironmentObject var appState: AppState
+    @State private var historyExpanded = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -184,9 +185,9 @@ struct MenuBarView: View {
 
     private var menuSection: some View {
         VStack(spacing: 2) {
-            MenuItem(title: "Violation History", icon: "clock.arrow.circlepath") {
-                openWindow(id: "history")
-            }
+            // Violation History submenu
+            violationHistorySubmenu
+
             MenuItem(title: "Settings...", icon: "gear") {
                 openWindow(id: "settings")
             }
@@ -199,6 +200,77 @@ struct MenuBarView: View {
             }
             MenuItem(title: "Quit", icon: "power") {
                 NSApplication.shared.terminate(nil)
+            }
+        }
+    }
+
+    private var violationHistorySubmenu: some View {
+        VStack(spacing: 0) {
+            // Header row - toggles expansion
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    historyExpanded.toggle()
+                }
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "clock.arrow.circlepath")
+                        .frame(width: 16)
+                        .foregroundStyle(.secondary)
+                    Text("Violation History")
+                    Spacer()
+                    Text("\(appState.violationHistory.count)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color(nsColor: .tertiarySystemFill))
+                        .clipShape(Capsule())
+                    Image(systemName: historyExpanded ? "chevron.down" : "chevron.right")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .font(.body)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
+                .background(historyExpanded ? Color(nsColor: .quaternarySystemFill) : .clear)
+                .clipShape(RoundedRectangle(cornerRadius: 4))
+            }
+            .buttonStyle(.plain)
+
+            // Expanded content
+            if historyExpanded {
+                VStack(spacing: 0) {
+                    if appState.violationHistory.isEmpty {
+                        Text("No violations recorded")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .padding(.vertical, 8)
+                            .padding(.leading, 32)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    } else {
+                        ForEach(appState.violationHistory.prefix(10)) { entry in
+                            HistoryEntryRow(entry: entry)
+                        }
+
+                        if appState.violationHistory.count > 10 {
+                            Button {
+                                openWindow(id: "history")
+                            } label: {
+                                HStack {
+                                    Spacer()
+                                    Text("View all \(appState.violationHistory.count) violations...")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                    Spacer()
+                                }
+                                .padding(.vertical, 6)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+                .padding(.leading, 8)
+                .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
     }
@@ -217,15 +289,15 @@ struct MenuBarView: View {
     }
 
     private func openWindow(id: String) {
-        if let popover = (NSApp.delegate as? AppDelegate)?.popover {
+        if let popover = AppDelegate.shared?.popover {
             popover.performClose(nil)
         }
 
         if let window = NSApp.windows.first(where: { $0.identifier?.rawValue == id }) {
             window.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
-        } else if let appDelegate = NSApp.delegate as? AppDelegate {
-            appDelegate.openWindow(id: id)
+        } else {
+            AppDelegate.shared?.openWindow(id: id)
         }
     }
 
@@ -252,23 +324,127 @@ struct StatusInfoRow: View {
 
 struct ViolationRow: View {
     let violation: ViolationEvent
+    @State private var isHovering = false
 
     var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "exclamationmark.circle.fill")
-                .foregroundStyle(.orange)
-                .font(.subheadline)
-
-            VStack(alignment: .leading, spacing: 1) {
-                Text(violation.processName)
+        Button {
+            openViolationAlert()
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "exclamationmark.circle.fill")
+                    .foregroundStyle(.orange)
                     .font(.subheadline)
-                    .lineLimit(1)
-                Text(violation.filePath)
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(violation.processName)
+                        .font(.subheadline)
+                        .lineLimit(1)
+                    Text(violation.filePath)
+                        .font(.caption)
+                        .foregroundStyle(isHovering ? .white.opacity(0.7) : .secondary)
+                        .lineLimit(1)
+                }
+
+                Spacer()
+
+                Image(systemName: "chevron.right")
                     .font(.caption)
-                    .foregroundStyle(.tertiary)
-                    .lineLimit(1)
+                    .foregroundStyle(isHovering ? .white.opacity(0.7) : .secondary)
             }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(isHovering ? Color(nsColor: .selectedContentBackgroundColor) : .clear)
+            .foregroundStyle(isHovering ? .white : .primary)
+            .clipShape(RoundedRectangle(cornerRadius: 4))
         }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            isHovering = hovering
+        }
+    }
+
+    private func openViolationAlert() {
+        // Close the popover
+        if let popover = AppDelegate.shared?.popover {
+            popover.performClose(nil)
+        }
+
+        // Open the violation alert window
+        AppDelegate.shared?.showViolationAlert(violation)
+    }
+}
+
+struct HistoryEntryRow: View {
+    let entry: HistoryEntry
+    @State private var isHovering = false
+
+    var body: some View {
+        Button {
+            fputs("[HistoryEntryRow] Button tapped!\n", stderr)
+            openViolationDetail()
+        } label: {
+            HStack(spacing: 8) {
+                // Action indicator
+                Image(systemName: entry.userAction.icon)
+                    .font(.caption)
+                    .foregroundStyle(actionColor)
+                    .frame(width: 14)
+
+                // Process name and file
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(entry.violation.processName)
+                        .font(.caption)
+                        .fontWeight(.medium)
+                        .lineLimit(1)
+                    Text(entry.violation.filePath)
+                        .font(.caption2)
+                        .foregroundStyle(isHovering ? .white.opacity(0.7) : .secondary)
+                        .lineLimit(1)
+                }
+
+                Spacer()
+
+                // Timestamp
+                Text(formatTime(entry.violation.timestamp))
+                    .font(.caption2)
+                    .foregroundStyle(isHovering ? .white.opacity(0.7) : .secondary)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(isHovering ? Color(nsColor: .selectedContentBackgroundColor) : .clear)
+            .foregroundStyle(isHovering ? .white : .primary)
+            .clipShape(RoundedRectangle(cornerRadius: 4))
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            isHovering = hovering
+        }
+    }
+
+    private var actionColor: Color {
+        switch entry.userAction {
+        case .resumed: return .green
+        case .killed: return .red
+        case .allowed: return .blue
+        case .pending: return .orange
+        case .dismissed: return .secondary
+        }
+    }
+
+    private func formatTime(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm"
+        return formatter.string(from: date)
+    }
+
+    private func openViolationDetail() {
+        fputs("[HistoryEntryRow] Opening violation detail for: \(entry.violation.processName)\n", stderr)
+
+        // Close the popover
+        AppDelegate.shared?.popover.performClose(nil)
+
+        // Open the violation alert window
+        AppDelegate.shared?.showViolationAlert(entry.violation)
     }
 }
 

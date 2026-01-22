@@ -68,6 +68,8 @@ struct ProcessTreeEntry: Codable, Identifiable, Hashable {
     let teamId: String?
     let signingId: String?
     let isPlatformBinary: Bool
+    /// Whether this process is currently stopped (SIGSTOP).
+    let isStopped: Bool
 
     var id: UInt32 { pid }
 
@@ -83,6 +85,23 @@ struct ProcessTreeEntry: Codable, Identifiable, Hashable {
         case teamId = "team_id"
         case signingId = "signing_id"
         case isPlatformBinary = "is_platform_binary"
+        case isStopped = "is_stopped"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        pid = try container.decode(UInt32.self, forKey: .pid)
+        ppid = try container.decodeIfPresent(UInt32.self, forKey: .ppid)
+        name = try container.decode(String.self, forKey: .name)
+        path = try container.decode(String.self, forKey: .path)
+        cwd = try container.decodeIfPresent(String.self, forKey: .cwd)
+        cmdline = try container.decodeIfPresent(String.self, forKey: .cmdline)
+        uid = try container.decodeIfPresent(UInt32.self, forKey: .uid)
+        euid = try container.decodeIfPresent(UInt32.self, forKey: .euid)
+        teamId = try container.decodeIfPresent(String.self, forKey: .teamId)
+        signingId = try container.decodeIfPresent(String.self, forKey: .signingId)
+        isPlatformBinary = try container.decodeIfPresent(Bool.self, forKey: .isPlatformBinary) ?? false
+        isStopped = try container.decodeIfPresent(Bool.self, forKey: .isStopped) ?? false
     }
 
     /// Signing status for UI display.
@@ -117,5 +136,64 @@ enum SigningStatus {
         case .signed: return "Signed"
         case .unsigned: return "Unsigned"
         }
+    }
+}
+
+/// User action taken on a violation.
+enum UserAction: String, Codable {
+    case resumed    // User clicked Resume (allow_once)
+    case killed     // User clicked Kill
+    case allowed    // User clicked OK (allow_permanently)
+    case pending    // No action taken yet (process still stopped)
+    case dismissed  // User closed without action (process remained stopped)
+
+    var label: String {
+        switch self {
+        case .resumed: return "Resumed"
+        case .killed: return "Killed"
+        case .allowed: return "Allowed"
+        case .pending: return "Pending"
+        case .dismissed: return "Dismissed"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .resumed: return "play.circle.fill"
+        case .killed: return "xmark.circle.fill"
+        case .allowed: return "checkmark.circle.fill"
+        case .pending: return "pause.circle.fill"
+        case .dismissed: return "minus.circle.fill"
+        }
+    }
+}
+
+/// A history entry wrapping a violation event with the user's action.
+struct HistoryEntry: Identifiable, Hashable {
+    let id: String
+    let violation: ViolationEvent
+    var userAction: UserAction
+    var actionTimestamp: Date?
+
+    init(violation: ViolationEvent, userAction: UserAction = .pending) {
+        self.id = violation.id
+        self.violation = violation
+        self.userAction = userAction
+        self.actionTimestamp = userAction == .pending ? nil : Date()
+    }
+
+    /// Check if the process is still actionable (alive and stopped).
+    var isProcessActionable: Bool {
+        guard userAction == .pending || userAction == .dismissed else {
+            return false
+        }
+        return isProcessAlive(pid: violation.processPid)
+    }
+
+    /// Check if a process with the given PID is still running.
+    private func isProcessAlive(pid: UInt32) -> Bool {
+        // kill(pid, 0) returns 0 if process exists and we have permission to signal it
+        // Returns -1 with ESRCH if process doesn't exist
+        return kill(pid_t(pid), 0) == 0
     }
 }

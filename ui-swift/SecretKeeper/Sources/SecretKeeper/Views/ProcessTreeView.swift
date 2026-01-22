@@ -65,7 +65,7 @@ struct ProcessTreeRow: View {
 
                 // Process name and path
                 VStack(alignment: .leading, spacing: 2) {
-                    HStack {
+                    HStack(spacing: 6) {
                         Text(entry.name)
                             .font(.system(.body, design: .monospaced))
                             .fontWeight(.medium)
@@ -73,11 +73,31 @@ struct ProcessTreeRow: View {
                         Text("PID \(entry.pid)")
                             .font(.system(.caption, design: .monospaced))
                             .foregroundColor(.secondary)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 1)
+                            .background(Color.secondary.opacity(0.1))
+                            .cornerRadius(3)
 
                         if let ppid = entry.ppid {
                             Text("PPID \(ppid)")
                                 .font(.system(.caption, design: .monospaced))
                                 .foregroundColor(.secondary)
+                        }
+
+                        // Stopped badge
+                        if entry.isStopped {
+                            HStack(spacing: 3) {
+                                Image(systemName: "pause.circle.fill")
+                                    .font(.caption)
+                                Text("STOPPED")
+                                    .font(.system(.caption2, design: .monospaced))
+                                    .fontWeight(.bold)
+                            }
+                            .foregroundColor(.red)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.red.opacity(0.15))
+                            .cornerRadius(4)
                         }
                     }
 
@@ -102,11 +122,11 @@ struct ProcessTreeRow: View {
                                 .lineLimit(1)
                         }
 
-                        if let teamId = entry.teamId {
-                            Label(teamId, systemImage: "building.2")
-                                .font(.system(.caption2, design: .monospaced))
-                                .foregroundColor(.secondary)
-                        }
+                        // Code signing info - combined for readability
+                        Label(signingDescription, systemImage: "signature")
+                            .font(.system(.caption2, design: .monospaced))
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
                     }
                 }
 
@@ -118,7 +138,11 @@ struct ProcessTreeRow: View {
             .padding(.vertical, 6)
             .padding(.horizontal, 8)
         }
-        .background(depth == 0 ? Color.orange.opacity(0.1) : Color.clear)
+        .background(
+            depth == 0
+                ? (entry.isStopped ? Color.red.opacity(0.1) : Color.orange.opacity(0.1))
+                : (entry.isStopped ? Color.red.opacity(0.05) : Color.clear)
+        )
     }
 
     private var signingColor: Color {
@@ -127,6 +151,25 @@ struct ProcessTreeRow: View {
         case .signed: return .purple
         case .unsigned: return .red
         }
+    }
+
+    private var signingDescription: String {
+        // For Apple platform binaries, show a friendly description
+        if let signingId = entry.signingId {
+            if signingId.hasPrefix("com.apple.") || entry.isPlatformBinary == true {
+                return "\(signingId) (Apple)"
+            }
+            // For third-party signed apps
+            if let teamId = entry.teamId, !teamId.isEmpty {
+                return "\(signingId) (\(teamId))"
+            }
+            return signingId
+        }
+        // Fall back to team ID if no signing ID
+        if let teamId = entry.teamId, !teamId.isEmpty {
+            return teamId
+        }
+        return "Unsigned"
     }
 }
 

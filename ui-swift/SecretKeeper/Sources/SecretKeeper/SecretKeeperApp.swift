@@ -61,12 +61,20 @@ struct SecretKeeperApp: App {
 }
 
 class AppDelegate: NSObject, NSApplicationDelegate {
+    /// Shared instance for access from SwiftUI views (since NSApp.delegate is wrapped by SwiftUI)
+    static var shared: AppDelegate!
+
     var statusItem: NSStatusItem?
     var popover = NSPopover()
     let appState = AppState()
     var ipcClient: IPCClient?
     let agentManager = AgentManager.shared
     private var cancellables = Set<AnyCancellable>()
+
+    override init() {
+        super.init()
+        AppDelegate.shared = self
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Run as accessory app (menu bar only, no dock icon, no auto-shown windows)
@@ -213,8 +221,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func openWindow(id: String) {
-        // Use SwiftUI's openWindow environment action via NSApp
-        // This is a workaround since we can't easily access @Environment from AppDelegate
+        // Check if window already exists
         for window in NSApp.windows {
             if window.identifier?.rawValue == id {
                 window.makeKeyAndOrderFront(nil)
@@ -223,9 +230,62 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
-        // Window doesn't exist yet - we need to trigger SwiftUI to create it
-        // Unfortunately this requires a bit of a hack with URL schemes or manual window creation
-        appLogger.info("Opening window: \(id)")
+        // Window doesn't exist - create it manually
+        appLogger.info("Creating window: \(id)")
+
+        let window: NSWindow
+        let contentView: AnyView
+
+        switch id {
+        case "history":
+            contentView = AnyView(
+                ViolationHistoryView()
+                    .environmentObject(appState)
+            )
+            window = NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: 900, height: 600),
+                styleMask: [.titled, .closable, .resizable, .miniaturizable],
+                backing: .buffered,
+                defer: false
+            )
+            window.title = "Violation History"
+
+        case "settings":
+            contentView = AnyView(
+                SettingsView()
+                    .environmentObject(appState)
+            )
+            window = NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: 500, height: 400),
+                styleMask: [.titled, .closable, .resizable],
+                backing: .buffered,
+                defer: false
+            )
+            window.title = "Settings"
+
+        case "exceptions":
+            contentView = AnyView(
+                ExceptionManagerView()
+                    .environmentObject(appState)
+            )
+            window = NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: 700, height: 500),
+                styleMask: [.titled, .closable, .resizable, .miniaturizable],
+                backing: .buffered,
+                defer: false
+            )
+            window.title = "Exception Manager"
+
+        default:
+            appLogger.warning("Unknown window id: \(id)")
+            return
+        }
+
+        window.identifier = NSUserInterfaceItemIdentifier(id)
+        window.contentView = NSHostingView(rootView: contentView)
+        window.center()
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     private func checkAndStartAgent() {
@@ -540,6 +600,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self.appState.pendingViolations.append(violation)
             self.appState.totalViolations += 1
 
+            // Add to history
+            self.appState.addToHistory(violation)
+
             // Icon will be updated by the state observer
 
             // Show notification
@@ -578,6 +641,29 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         UNUserNotificationCenter.current().add(request)
     }
+
+    // MARK: - Violation Action Handlers
+
+    /// Kill the suspended process.
+    func handleKillProcess(eventId: String) {
+        appLogger.info("Killing process for event: \(eventId)")
+        ipcClient?.killProcess(eventId: eventId)
+        appState.recordAction(.killed, forViolationId: eventId)
+    }
+
+    /// Allow the process to continue (one-time).
+    func handleAllowOnce(eventId: String) {
+        appLogger.info("Allowing once for event: \(eventId)")
+        ipcClient?.allowOnce(eventId: eventId)
+        appState.recordAction(.resumed, forViolationId: eventId)
+    }
+
+    /// Allow the process permanently and create exception.
+    func handleAllowPermanently(eventId: String) {
+        appLogger.info("Allowing permanently for event: \(eventId)")
+        ipcClient?.allowPermanently(eventId: eventId)
+        appState.recordAction(.allowed, forViolationId: eventId)
+    }
 }
 
 extension AppDelegate: IPCClientDelegate {
@@ -597,6 +683,30 @@ extension AppDelegate: IPCClientDelegate {
             // Show FDA warning if agent is in degraded mode and we haven't shown it yet
             if status.degradedMode && wasNotDegraded {
                 self.showDegradedModeAlert()
+            }
+        }
+    }
+
+    func ipcClient(_ client: IPCClient, didReceiveCategories categories: [ProtectedCategory]) {
+        appLogger.debug("Received \(categories.count) protected categories")
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            self.appState.categories = categories
+        }
+    }
+
+    func ipcClient(_ client: IPCClient, didReceiveViolationHistory violations: [ViolationEvent]) {
+        appLogger.info("Received \(violations.count) historical violations")
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            // Add historical violations to history (they come newest first from the agent)
+            for violation in violations {
+                // Only add if not already in history (avoid duplicates on reconnect)
+                if self.appState.violationHistory.first(where: { $0.id == violation.id }) == nil {
+                    // Historical violations have unknown user action - mark as dismissed
+                    let entry = HistoryEntry(violation: violation, userAction: .dismissed)
+                    self.appState.violationHistory.append(entry)
+                }
             }
         }
     }
@@ -674,8 +784,79 @@ extension AppDelegate: IPCClientDelegate {
         DispatchQueue.main.async { [weak self] in
             self?.appState.isConnected = true
         }
+        // Request agent info for auto-upgrade check
+        client.getAgentInfo()
         // Request status to check if agent is in degraded mode
         client.getStatus()
+        // Request protected categories
+        client.getCategories()
+        // Request violation history
+        client.getViolations(limit: 100)
+    }
+
+    func ipcClient(_ client: IPCClient, didReceiveAgentInfo info: AgentInfo) {
+        appLogger.info("Received agent info: version=\(info.version), mtime=\(info.binaryMtime)")
+        checkAndPerformAutoUpgrade(agentInfo: info)
+    }
+
+    private func checkAndPerformAutoUpgrade(agentInfo: AgentInfo) {
+        // Get the embedded binary mtime from our app bundle
+        guard let embeddedBinaryPath = agentManager.findAgentBinary() else {
+            appLogger.warning("No embedded binary found for upgrade check")
+            return
+        }
+
+        // Get embedded binary mtime
+        guard let embeddedAttrs = try? FileManager.default.attributesOfItem(atPath: embeddedBinaryPath),
+              let embeddedDate = embeddedAttrs[.modificationDate] as? Date else {
+            appLogger.warning("Could not get embedded binary mtime")
+            return
+        }
+
+        let embeddedMtime = Int64(embeddedDate.timeIntervalSince1970)
+        let agentMtime = agentInfo.binaryMtime
+        let ageDifference = embeddedMtime - agentMtime
+
+        appLogger.info("Auto-upgrade check: embedded=\(embeddedMtime), agent=\(agentMtime), diff=\(ageDifference)s")
+
+        // If the embedded binary is more than 60 seconds newer than the running agent, upgrade
+        if ageDifference > 60 {
+            appLogger.info("Agent binary is \(ageDifference)s older than embedded - triggering auto-upgrade")
+            performSilentUpgrade()
+        } else {
+            appLogger.info("Agent binary is up to date (diff=\(ageDifference)s)")
+        }
+    }
+
+    private func performSilentUpgrade() {
+        appLogger.info("=== Starting silent auto-upgrade ===")
+
+        // Disconnect IPC first
+        ipcClient?.disconnect()
+        appState.isConnected = false
+        appState.agentStatus = nil
+
+        // Restart the agent (which copies the new binary)
+        agentManager.startAgent { [weak self] result in
+            DispatchQueue.main.async {
+                switch result {
+                case .success:
+                    appLogger.info("Auto-upgrade completed successfully")
+                    self?.connectToAgent()
+                case .failure(let error):
+                    if case .userCancelled = error {
+                        appLogger.info("User cancelled auto-upgrade")
+                        // Try to reconnect to existing agent
+                        self?.connectToAgent()
+                    } else {
+                        appLogger.error("Auto-upgrade failed: \(error.localizedDescription)")
+                        // Don't show error dialog for auto-upgrade - just log it
+                        // Try to reconnect to existing agent
+                        self?.connectToAgent()
+                    }
+                }
+            }
+        }
     }
 
     func ipcClientDidDisconnect(_ client: IPCClient) {
