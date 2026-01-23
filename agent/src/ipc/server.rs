@@ -22,6 +22,7 @@ const PRIVILEGED_COMMANDS: &[&str] = &[
     "remove_exception",
     "allow_once",
     "allow_permanently",
+    "resume_process",
 ];
 
 /// Peer credentials from Unix socket.
@@ -227,6 +228,7 @@ impl IpcServer {
         degraded_mode: Arc<RwLock<bool>>,
         config_toml: String,
         rule_engine: Arc<RwLock<RuleEngine>>,
+        pending_events: Arc<RwLock<Vec<ViolationEvent>>>,
     ) -> Result<Self> {
         // Remove existing socket if present
         if socket_path.exists() {
@@ -264,6 +266,7 @@ impl IpcServer {
             degraded_mode,
             config_toml,
             rule_engine,
+            pending_events,
         ));
 
         tracing::info!("IPC server listening on {}", socket_path.display());
@@ -479,6 +482,10 @@ mod tests {
         Arc::new(RwLock::new(RuleEngine::new(Vec::new(), Vec::new())))
     }
 
+    fn create_test_pending_events() -> Arc<RwLock<Vec<ViolationEvent>>> {
+        Arc::new(RwLock::new(Vec::new()))
+    }
+
     #[tokio::test]
     async fn test_server_creation() {
         let dir = tempdir().unwrap();
@@ -487,6 +494,7 @@ mod tests {
         let mode = Arc::new(RwLock::new("block".to_string()));
         let degraded_mode = Arc::new(RwLock::new(false));
         let rule_engine = create_test_rule_engine();
+        let pending_events = create_test_pending_events();
 
         let server = IpcServer::new(
             &socket_path,
@@ -495,6 +503,7 @@ mod tests {
             degraded_mode,
             String::new(),
             rule_engine,
+            pending_events,
         )
         .await;
         assert!(server.is_ok());
@@ -594,6 +603,7 @@ mod tests {
         let mode = Arc::new(RwLock::new("block".to_string()));
         let degraded_mode = Arc::new(RwLock::new(false));
         let rule_engine = create_test_rule_engine();
+        let pending_events = create_test_pending_events();
 
         let server = IpcServer::new(
             &socket_path,
@@ -602,6 +612,7 @@ mod tests {
             degraded_mode,
             "test config".to_string(),
             rule_engine,
+            pending_events,
         )
         .await
         .unwrap();
@@ -620,6 +631,7 @@ mod tests {
         let mode = Arc::new(RwLock::new("block".to_string()));
         let degraded_mode = Arc::new(RwLock::new(false));
         let rule_engine = create_test_rule_engine();
+        let pending_events = create_test_pending_events();
 
         let server = IpcServer::new(
             &socket_path,
@@ -628,6 +640,7 @@ mod tests {
             degraded_mode,
             "test config".to_string(),
             rule_engine,
+            pending_events,
         )
         .await
         .unwrap();
@@ -649,6 +662,7 @@ mod tests {
         let mode = Arc::new(RwLock::new("block".to_string()));
         let degraded_mode = Arc::new(RwLock::new(false));
         let rule_engine = create_test_rule_engine();
+        let pending_events = create_test_pending_events();
         let server = IpcServer::new(
             &socket_path,
             storage,
@@ -656,6 +670,7 @@ mod tests {
             degraded_mode,
             String::new(),
             rule_engine,
+            pending_events,
         )
         .await;
 
@@ -676,6 +691,7 @@ mod tests {
         let mode = Arc::new(RwLock::new("block".to_string()));
         let degraded_mode = Arc::new(RwLock::new(false));
         let rule_engine = create_test_rule_engine();
+        let pending_events = create_test_pending_events();
         let server = IpcServer::new(
             &socket_path,
             storage,
@@ -683,6 +699,7 @@ mod tests {
             degraded_mode,
             String::new(),
             rule_engine,
+            pending_events,
         )
         .await;
 
@@ -707,6 +724,7 @@ mod tests {
         assert!(PRIVILEGED_COMMANDS.contains(&"remove_exception"));
         assert!(PRIVILEGED_COMMANDS.contains(&"allow_once"));
         assert!(PRIVILEGED_COMMANDS.contains(&"allow_permanently"));
+        assert!(PRIVILEGED_COMMANDS.contains(&"resume_process"));
 
         // Verify some commands are NOT in the list
         assert!(!PRIVILEGED_COMMANDS.contains(&"ping"));

@@ -120,6 +120,9 @@ async fn run_agent(args: &Args, config: Config) -> Result<()> {
     let mode = Arc::new(RwLock::new(args.mode.clone()));
     let degraded_mode = Arc::new(RwLock::new(false));
 
+    // Create shared pending events queue (shared between IPC handlers and monitor)
+    let pending_events = Arc::new(RwLock::new(Vec::new()));
+
     // Create IPC server
     let ipc_server = IpcServer::new(
         &config.agent.socket_path,
@@ -128,6 +131,7 @@ async fn run_agent(args: &Args, config: Config) -> Result<()> {
         degraded_mode.clone(),
         config_toml,
         rule_engine.clone(),
+        pending_events.clone(),
     )
     .await?;
     tracing::info!("IPC socket: {}", config.agent.socket_path.display());
@@ -143,6 +147,7 @@ async fn run_agent(args: &Args, config: Config) -> Result<()> {
         event_tx,
         mode.clone(),
         degraded_mode.clone(),
+        pending_events,
     ));
 
     // Parse mechanism

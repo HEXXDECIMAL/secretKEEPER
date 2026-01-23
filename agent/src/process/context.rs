@@ -32,6 +32,7 @@ pub struct ProcessContext {
 #[allow(dead_code)]
 impl ProcessContext {
     /// Creates a new process context with the specified executable path.
+    #[must_use]
     pub fn new(path: PathBuf) -> Self {
         Self {
             path,
@@ -48,63 +49,75 @@ impl ProcessContext {
         }
     }
 
+    #[must_use]
     pub fn with_pid(mut self, pid: u32) -> Self {
         self.pid = Some(pid);
         self
     }
 
+    #[must_use]
     pub fn with_ppid(mut self, ppid: u32) -> Self {
         self.ppid = Some(ppid);
         self
     }
 
+    #[must_use]
     pub fn with_team_id(mut self, team_id: impl Into<String>) -> Self {
         self.team_id = Some(team_id.into());
         self
     }
 
+    #[must_use]
     pub fn with_app_id(mut self, app_id: impl Into<String>) -> Self {
         self.app_id = Some(app_id.into());
         self
     }
 
+    #[must_use]
     pub fn with_signing_id(mut self, signing_id: impl Into<String>) -> Self {
         self.signing_id = Some(signing_id.into());
         self
     }
 
+    #[must_use]
     pub fn with_args(mut self, args: Vec<String>) -> Self {
         self.args = Some(args);
         self
     }
 
+    #[must_use]
     pub fn with_uid(mut self, uid: u32) -> Self {
         self.uid = Some(uid);
         self
     }
 
+    #[must_use]
     pub fn with_euid(mut self, euid: u32) -> Self {
         self.euid = Some(euid);
         self
     }
 
+    #[must_use]
     pub fn with_platform_binary(mut self, platform_binary: bool) -> Self {
         self.platform_binary = Some(platform_binary);
         self
     }
 
+    #[must_use]
     pub fn with_cwd(mut self, cwd: PathBuf) -> Self {
         self.cwd = Some(cwd);
         self
     }
 
     /// Returns the process basename.
+    #[must_use]
     pub fn basename(&self) -> &str {
         self.path.file_name().and_then(|n| n.to_str()).unwrap_or("")
     }
 }
 
 /// Retrieves the home directory path for a given user ID.
+#[must_use]
 pub fn get_home_for_uid(uid: u32) -> Option<PathBuf> {
     #[cfg(unix)]
     {

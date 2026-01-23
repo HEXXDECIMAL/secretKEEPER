@@ -75,6 +75,10 @@ pub enum Request {
 
     /// Get agent binary info (for auto-upgrade detection).
     GetAgentInfo,
+
+    /// Resume a stopped process by PID (send SIGCONT).
+    /// Used when the original violating process has exited but its parent remains stopped.
+    ResumeProcess { pid: u32 },
 }
 
 /// Parameters for adding a new exception.
@@ -181,12 +185,14 @@ pub struct Category {
 
 #[allow(dead_code)]
 impl Response {
+    #[must_use]
     pub fn success(message: impl Into<String>) -> Self {
         Self::Success {
             message: message.into(),
         }
     }
 
+    #[must_use]
     pub fn error(message: impl Into<String>) -> Self {
         Self::Error {
             message: message.into(),
@@ -194,6 +200,7 @@ impl Response {
         }
     }
 
+    #[must_use]
     pub fn error_with_code(message: impl Into<String>, code: impl Into<String>) -> Self {
         Self::Error {
             message: message.into(),
@@ -253,6 +260,7 @@ pub struct ViolationEvent {
 
 #[allow(dead_code)]
 impl ViolationEvent {
+    #[must_use]
     pub fn new(
         file_path: impl Into<String>,
         process_path: impl Into<String>,

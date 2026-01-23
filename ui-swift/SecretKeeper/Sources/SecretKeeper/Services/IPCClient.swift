@@ -204,6 +204,12 @@ class IPCClient: NSObject {
         send(KillRequest(eventId: eventId))
     }
 
+    /// Resume a stopped process by PID (send SIGCONT).
+    /// Used when the original violating process has exited but its parent remains stopped.
+    func resumeProcess(pid: UInt32) {
+        send(ResumeProcessRequest(pid: pid))
+    }
+
     /// Get violation history.
     func getViolations(limit: Int? = nil, since: Date? = nil) {
         send(GetViolationsRequest(limit: limit, since: since))
@@ -558,6 +564,11 @@ private struct KillRequest: Encodable {
         case action
         case eventId = "event_id"
     }
+}
+
+private struct ResumeProcessRequest: Encodable {
+    let action = "resume_process"
+    let pid: UInt32
 }
 
 private struct GetViolationsRequest: Encodable {

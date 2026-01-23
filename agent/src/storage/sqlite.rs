@@ -13,6 +13,12 @@ pub struct Storage {
     conn: Mutex<Connection>,
 }
 
+impl std::fmt::Debug for Storage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Storage").finish_non_exhaustive()
+    }
+}
+
 impl Storage {
     /// Acquire the database lock, recovering from poison if necessary.
     /// Poisoned mutexes indicate a previous panic - we log and continue.
@@ -400,6 +406,7 @@ pub struct Violation {
 
 #[allow(dead_code)]
 impl Violation {
+    #[must_use]
     pub fn new(
         file_path: impl Into<String>,
         process_path: impl Into<String>,
@@ -423,36 +430,43 @@ impl Violation {
         }
     }
 
+    #[must_use]
     pub fn with_rule_id(mut self, rule_id: impl Into<String>) -> Self {
         self.rule_id = Some(rule_id.into());
         self
     }
 
+    #[must_use]
     pub fn with_ppid(mut self, ppid: u32) -> Self {
         self.process_ppid = Some(ppid);
         self
     }
 
+    #[must_use]
     pub fn with_euid(mut self, euid: u32) -> Self {
         self.process_euid = Some(euid);
         self
     }
 
+    #[must_use]
     pub fn with_cmdline(mut self, cmdline: impl Into<String>) -> Self {
         self.process_cmdline = Some(cmdline.into());
         self
     }
 
+    #[must_use]
     pub fn with_team_id(mut self, team_id: impl Into<String>) -> Self {
         self.team_id = Some(team_id.into());
         self
     }
 
+    #[must_use]
     pub fn with_signing_id(mut self, signing_id: impl Into<String>) -> Self {
         self.signing_id = Some(signing_id.into());
         self
     }
 
+    #[must_use]
     pub fn with_process_tree(mut self, tree: Vec<ProcessTreeEntry>) -> Self {
         self.process_tree = tree;
         self

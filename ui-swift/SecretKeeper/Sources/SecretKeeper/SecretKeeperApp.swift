@@ -653,11 +653,31 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         ipcClient?.allowPermanently(eventId: eventId)
         appState.recordAction(.allowed, forViolationId: eventId)
     }
+
+    /// Resume a stopped process by PID.
+    /// Used when the original violating process has exited but its parent remains stopped.
+    func handleResumeProcess(pid: UInt32, forViolationId violationId: String) {
+        appLogger.info("Resuming process \(pid) for violation: \(violationId)")
+        ipcClient?.resumeProcess(pid: pid)
+        appState.recordAction(.resumed, forViolationId: violationId)
+    }
 }
 
 extension AppDelegate: IPCClientDelegate {
     func ipcClient(_ client: IPCClient, didReceiveViolation violation: ViolationEvent) {
         appLogger.info("Received violation event: \(violation.processPath) -> \(violation.filePath)")
+
+        // Deduplicate: skip if we already have a pending violation for same PID + file
+        // This happens when a process reads a file multiple times before we can stop it
+        let isDuplicate = appState.pendingViolations.contains { existing in
+            existing.processPid == violation.processPid && existing.filePath == violation.filePath
+        }
+
+        if isDuplicate {
+            appLogger.debug("Skipping duplicate violation for PID \(violation.processPid) -> \(violation.filePath)")
+            return
+        }
+
         showViolationAlert(violation)
     }
 

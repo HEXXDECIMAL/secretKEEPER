@@ -16,9 +16,25 @@ struct ViolationAlertView: View {
     /// Find a matching exception for this violation.
     /// Using a computed property ensures SwiftUI tracks appState.exceptions changes.
     private var matchingException: Exception? {
-        let result = findMatchingException(exceptions: appState.exceptions, violation: violation)
-        fputs("[ViolationAlertView] matchingException computed: \(appState.exceptions.count) exceptions, match=\(result?.filePattern ?? "nil")\n", stderr)
-        return result
+        findMatchingException(exceptions: appState.exceptions, violation: violation)
+    }
+
+    /// Find a stopped parent process that can be resumed.
+    /// Returns the PID of the first stopped process in the tree (excluding the violator itself).
+    private var stoppedParentPid: UInt32? {
+        // Check parent PID first
+        if let ppid = violation.parentPid, ppid > 1 {
+            if processState(for: ppid) == .stopped {
+                return ppid
+            }
+        }
+        // Also check process tree for any stopped parent
+        for entry in violation.processTree.dropFirst() {  // Skip first entry (the violator)
+            if entry.pid > 1 && entry.currentState == .stopped {
+                return entry.pid
+            }
+        }
+        return nil
     }
 
     /// Perform an action safely by deferring everything to avoid use-after-free crashes.
@@ -231,30 +247,66 @@ struct ViolationAlertView: View {
                     .keyboardShortcut(.defaultAction)
                     .help("Allow and add permanent exception")
                 } else {
-                    // Historical view - show resolved status
-                    HStack(spacing: 6) {
-                        Image(systemName: "clock.badge.checkmark")
-                            .foregroundStyle(.secondary)
-                        Text("This violation has already been resolved")
-                            .foregroundStyle(.secondary)
-                    }
-
-                    Spacer()
-
-                    Button("Add Exception...") {
-                        showAddException = true
-                    }
-
-                    Button("Close") {
-                        // Use orderOut to close without animation - prevents use-after-free
-                        // in _NSWindowTransformAnimation when SwiftUI tears down the view.
-                        if let window = NSApp.keyWindow {
-                            window.orderOut(nil)
-                        } else if let window = NSApp.windows.first(where: { $0.title.contains("Violation") }) {
-                            window.orderOut(nil)
+                    // Historical view - show resolved status or stopped parent warning
+                    if let stoppedPid = stoppedParentPid {
+                        // Parent process is still stopped - offer to resume it
+                        HStack(spacing: 6) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundStyle(.orange)
+                            Text("Parent process (PID \(stoppedPid)) is still stopped")
+                                .foregroundStyle(.secondary)
                         }
+
+                        Spacer()
+
+                        Button {
+                            performAction { violationId in
+                                AppDelegate.shared?.handleResumeProcess(pid: stoppedPid, forViolationId: violationId)
+                            }
+                        } label: {
+                            Text("Resume Parent")
+                                .frame(minWidth: 90)
+                        }
+                        .help("Send SIGCONT to resume the stopped parent process")
+
+                        Button("Add Exception...") {
+                            showAddException = true
+                        }
+
+                        Button("Close") {
+                            if let window = NSApp.keyWindow {
+                                window.orderOut(nil)
+                            } else if let window = NSApp.windows.first(where: { $0.title.contains("Violation") }) {
+                                window.orderOut(nil)
+                            }
+                        }
+                        .keyboardShortcut(.defaultAction)
+                    } else {
+                        // Fully resolved - no stopped processes
+                        HStack(spacing: 6) {
+                            Image(systemName: "clock.badge.checkmark")
+                                .foregroundStyle(.secondary)
+                            Text("This violation has already been resolved")
+                                .foregroundStyle(.secondary)
+                        }
+
+                        Spacer()
+
+                        Button("Add Exception...") {
+                            showAddException = true
+                        }
+
+                        Button("Close") {
+                            // Use orderOut to close without animation - prevents use-after-free
+                            // in _NSWindowTransformAnimation when SwiftUI tears down the view.
+                            if let window = NSApp.keyWindow {
+                                window.orderOut(nil)
+                            } else if let window = NSApp.windows.first(where: { $0.title.contains("Violation") }) {
+                                window.orderOut(nil)
+                            }
+                        }
+                        .keyboardShortcut(.defaultAction)
                     }
-                    .keyboardShortcut(.defaultAction)
                 }
             }
             .padding()

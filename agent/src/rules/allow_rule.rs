@@ -55,6 +55,7 @@ pub struct AllowRule {
 impl AllowRule {
     /// Check if this rule has no conditions (would match everything).
     /// Empty rules are a security risk and should be rejected.
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.base.is_none()
             && self.path.is_none()
@@ -78,11 +79,13 @@ impl AllowRule {
     }
 
     /// Check if this rule matches the given process context.
+    #[must_use]
     pub fn matches(&self, context: &ProcessContext) -> bool {
         self.matches_with_debug(context, false)
     }
 
     /// Check if this rule matches with optional debug logging.
+    #[must_use]
     pub fn matches_with_debug(&self, context: &ProcessContext, debug: bool) -> bool {
         // All specified conditions must match (AND logic)
 
@@ -342,6 +345,7 @@ impl AllowRule {
 }
 
 /// Performs glob-like pattern matching with * wildcard support.
+#[must_use]
 pub fn matches_pattern(pattern: &str, text: &str) -> bool {
     glob_match(pattern, text)
 }

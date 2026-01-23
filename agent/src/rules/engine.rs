@@ -7,6 +7,7 @@ use std::collections::HashSet;
 
 /// The result of evaluating access rules.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[must_use]
 pub enum Decision {
     /// Access is allowed by a rule.
     Allow,
@@ -17,6 +18,7 @@ pub enum Decision {
 }
 
 /// The rule engine evaluates process access against configured rules.
+#[derive(Debug)]
 pub struct RuleEngine {
     protected_files: Vec<ProtectedFile>,
     global_exclusions: Vec<AllowRule>,
@@ -82,11 +84,13 @@ impl RuleEngine {
 
     /// Check if a category is enabled.
     #[allow(dead_code)]
+    #[must_use]
     pub fn is_category_enabled(&self, category_id: &str) -> bool {
         !self.disabled_categories.contains(category_id)
     }
 
     /// Get the list of protected files.
+    #[must_use]
     pub fn protected_files(&self) -> &[ProtectedFile] {
         &self.protected_files
     }

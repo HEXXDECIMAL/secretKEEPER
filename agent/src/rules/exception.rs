@@ -72,6 +72,7 @@ pub struct Exception {
 
 impl Exception {
     /// Check if this exception is still valid (not expired).
+    #[must_use]
     pub fn is_valid(&self) -> bool {
         match self.expires_at {
             Some(expires) => Utc::now() < expires,
@@ -87,6 +88,7 @@ impl Exception {
     /// - Adhoc: matches against process signing_id (adhoc apps have signing IDs)
     /// - Unsigned: matches if process has no team_id and no signing_id
     /// - None: no signer requirement (matches any)
+    #[must_use]
     pub fn matches(
         &self,
         process_path: &str,
@@ -166,6 +168,7 @@ pub struct ExceptionBuilder {
 
 #[allow(dead_code)]
 impl ExceptionBuilder {
+    #[must_use]
     pub fn new(file_pattern: impl Into<String>, added_by: impl Into<String>) -> Self {
         Self {
             process_path: None,
@@ -180,44 +183,52 @@ impl ExceptionBuilder {
         }
     }
 
+    #[must_use]
     pub fn process_path(mut self, path: impl Into<String>) -> Self {
         self.process_path = Some(path.into());
         self
     }
 
+    #[must_use]
     pub fn signer_type(mut self, signer_type: SignerType) -> Self {
         self.signer_type = Some(signer_type);
         self
     }
 
+    #[must_use]
     pub fn team_id(mut self, team_id: impl Into<String>) -> Self {
         self.team_id = Some(team_id.into());
         self.signer_type = Some(SignerType::TeamId);
         self
     }
 
+    #[must_use]
     pub fn signing_id(mut self, signing_id: impl Into<String>) -> Self {
         self.signing_id = Some(signing_id.into());
         // Don't auto-set signer_type here - caller should set it explicitly
         self
     }
 
+    #[must_use]
     pub fn glob(mut self, is_glob: bool) -> Self {
         self.is_glob = is_glob;
         self
     }
 
+    #[must_use]
     pub fn expires_at(mut self, expires: DateTime<Utc>) -> Self {
         self.expires_at = Some(expires);
         self
     }
 
+    #[must_use]
     pub fn comment(mut self, comment: impl Into<String>) -> Self {
         self.comment = Some(comment.into());
         self
     }
 
     /// Build the exception. Note: id and created_at are set by the database.
+    #[must_use]
     pub fn build(self) -> Exception {
         Exception {
             id: 0, // Set by database

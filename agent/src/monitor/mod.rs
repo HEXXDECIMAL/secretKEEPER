@@ -200,6 +200,8 @@ pub struct MonitorContext {
     pub event_tx: broadcast::Sender<ViolationEvent>,
     pub mode: Arc<tokio::sync::RwLock<String>>,
     pub degraded_mode: Arc<tokio::sync::RwLock<bool>>,
+    /// Pending events awaiting user action. Shared with IPC handlers.
+    pub pending_events: Arc<tokio::sync::RwLock<Vec<ViolationEvent>>>,
     rate_limiter: RateLimiter,
     pub stats: EventStats,
 }
@@ -213,6 +215,7 @@ impl MonitorContext {
         event_tx: broadcast::Sender<ViolationEvent>,
         mode: Arc<tokio::sync::RwLock<String>>,
         degraded_mode: Arc<tokio::sync::RwLock<bool>>,
+        pending_events: Arc<tokio::sync::RwLock<Vec<ViolationEvent>>>,
     ) -> Self {
         let max_events_per_sec = config.monitoring.max_events_per_sec;
         Self {
@@ -222,6 +225,7 @@ impl MonitorContext {
             event_tx,
             mode,
             degraded_mode,
+            pending_events,
             rate_limiter: RateLimiter::new(max_events_per_sec),
             stats: EventStats::default(),
         }
@@ -285,6 +289,25 @@ impl MonitorContext {
                 None
             }
             Decision::Deny => {
+                // Check for duplicate: if we already have a pending event for the same PID + file,
+                // skip creating another event. This happens when a process reads a file multiple
+                // times before we can suspend it.
+                let pid = context.pid.unwrap_or(0);
+                {
+                    let pending = self.pending_events.read().await;
+                    let is_duplicate = pending
+                        .iter()
+                        .any(|e| e.process_pid == pid && e.file_path == file_path);
+                    if is_duplicate {
+                        tracing::debug!(
+                            "Skipping duplicate violation for PID {} -> {}",
+                            pid,
+                            file_path
+                        );
+                        return None;
+                    }
+                }
+
                 self.stats.violations.fetch_add(1, Ordering::Relaxed);
                 let mode = self.mode.read().await;
                 let mode_str = mode.as_str();
@@ -360,6 +383,21 @@ impl MonitorContext {
                     action: violation.action,
                     process_tree: tree,
                 };
+
+                // Add to pending events for user action (allow/deny/kill)
+                {
+                    let mut pending = self.pending_events.write().await;
+                    // Limit pending events to prevent memory issues
+                    const MAX_PENDING_EVENTS: usize = 100;
+                    if pending.len() >= MAX_PENDING_EVENTS {
+                        let dropped = pending.remove(0);
+                        tracing::warn!(
+                            "Pending event queue full, dropped oldest event: {}",
+                            dropped.id
+                        );
+                    }
+                    pending.push(event.clone());
+                }
 
                 // Broadcast to connected clients
                 let _ = self.event_tx.send(event.clone());
@@ -687,8 +725,17 @@ mod tests {
         let (event_tx, _rx) = broadcast::channel(100);
         let mode = Arc::new(tokio::sync::RwLock::new("block".to_string()));
         let degraded_mode = Arc::new(tokio::sync::RwLock::new(false));
+        let pending_events = Arc::new(tokio::sync::RwLock::new(Vec::new()));
 
-        let ctx = MonitorContext::new(config, rule_engine, storage, event_tx, mode, degraded_mode);
+        let ctx = MonitorContext::new(
+            config,
+            rule_engine,
+            storage,
+            event_tx,
+            mode,
+            degraded_mode,
+            pending_events,
+        );
 
         let process = ProcessContext::new(PathBuf::from("/usr/bin/cat")).with_pid(1234);
         let result = ctx.process_access("/tmp/random_file.txt", &process).await;
@@ -726,8 +773,17 @@ mod tests {
         let (event_tx, _rx) = broadcast::channel(100);
         let mode = Arc::new(tokio::sync::RwLock::new("block".to_string()));
         let degraded_mode = Arc::new(tokio::sync::RwLock::new(false));
+        let pending_events = Arc::new(tokio::sync::RwLock::new(Vec::new()));
 
-        let ctx = MonitorContext::new(config, rule_engine, storage, event_tx, mode, degraded_mode);
+        let ctx = MonitorContext::new(
+            config,
+            rule_engine,
+            storage,
+            event_tx,
+            mode,
+            degraded_mode,
+            pending_events,
+        );
 
         // Allowed process
         let process = ProcessContext::new(PathBuf::from("/usr/bin/ssh")).with_pid(1234);
@@ -763,8 +819,17 @@ mod tests {
         let (event_tx, _rx) = broadcast::channel(100);
         let mode = Arc::new(tokio::sync::RwLock::new("block".to_string()));
         let degraded_mode = Arc::new(tokio::sync::RwLock::new(false));
+        let pending_events = Arc::new(tokio::sync::RwLock::new(Vec::new()));
 
-        let ctx = MonitorContext::new(config, rule_engine, storage, event_tx, mode, degraded_mode);
+        let ctx = MonitorContext::new(
+            config,
+            rule_engine,
+            storage,
+            event_tx,
+            mode,
+            degraded_mode,
+            pending_events,
+        );
 
         // Denied process
         let process = ProcessContext::new(PathBuf::from("/usr/bin/cat")).with_pid(1234);
@@ -798,8 +863,17 @@ mod tests {
         let (event_tx, _rx) = broadcast::channel(100);
         let mode = Arc::new(tokio::sync::RwLock::new("block".to_string()));
         let degraded_mode = Arc::new(tokio::sync::RwLock::new(false));
+        let pending_events = Arc::new(tokio::sync::RwLock::new(Vec::new()));
 
-        let ctx = MonitorContext::new(config, rule_engine, storage, event_tx, mode, degraded_mode);
+        let ctx = MonitorContext::new(
+            config,
+            rule_engine,
+            storage,
+            event_tx,
+            mode,
+            degraded_mode,
+            pending_events,
+        );
 
         let process = ProcessContext::new(PathBuf::from("/usr/bin/cat")).with_pid(1234);
         let result = ctx.process_access("/tmp/excluded_file.txt", &process).await;
@@ -834,8 +908,17 @@ mod tests {
         let (event_tx, _rx) = broadcast::channel(100);
         let mode = Arc::new(tokio::sync::RwLock::new("monitor".to_string())); // Not block mode
         let degraded_mode = Arc::new(tokio::sync::RwLock::new(false));
+        let pending_events = Arc::new(tokio::sync::RwLock::new(Vec::new()));
 
-        let ctx = MonitorContext::new(config, rule_engine, storage, event_tx, mode, degraded_mode);
+        let ctx = MonitorContext::new(
+            config,
+            rule_engine,
+            storage,
+            event_tx,
+            mode,
+            degraded_mode,
+            pending_events,
+        );
 
         let process = ProcessContext::new(PathBuf::from("/usr/bin/cat")).with_pid(1234);
         let result = ctx.process_access("~/.ssh/id_rsa", &process).await;
@@ -865,6 +948,7 @@ mod tests {
             let (event_tx, _rx) = broadcast::channel(100);
             let mode = Arc::new(tokio::sync::RwLock::new("block".to_string()));
             let degraded_mode = Arc::new(tokio::sync::RwLock::new(false));
+            let pending_events = Arc::new(tokio::sync::RwLock::new(Vec::new()));
 
             let ctx = Arc::new(MonitorContext::new(
                 config,
@@ -873,6 +957,7 @@ mod tests {
                 event_tx,
                 mode,
                 degraded_mode,
+                pending_events,
             ));
             let result = create_monitor(Mechanism::Auto, ctx);
             assert!(result.is_err());

@@ -39,6 +39,7 @@ pub struct ProcessTreeEntry {
 }
 
 /// Build complete process tree from PID up to init (PID 1).
+#[must_use]
 pub fn build_process_tree(pid: u32) -> Vec<ProcessTreeEntry> {
     let mut tree = Vec::new();
     let mut current_pid = pid;

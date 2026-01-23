@@ -461,6 +461,7 @@ mod tests {
         let (event_tx, _rx) = broadcast::channel(100);
         let mode = Arc::new(tokio::sync::RwLock::new("block".to_string()));
         let degraded_mode = Arc::new(tokio::sync::RwLock::new(false));
+        let pending_events = Arc::new(tokio::sync::RwLock::new(Vec::new()));
         let context = Arc::new(MonitorContext::new(
             config,
             rule_engine,
@@ -468,6 +469,7 @@ mod tests {
             event_tx,
             mode,
             degraded_mode,
+            pending_events,
         ));
         // Need to keep temp_dir alive - leak it for tests
         std::mem::forget(temp_dir);

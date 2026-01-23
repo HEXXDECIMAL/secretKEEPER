@@ -23,7 +23,8 @@ pub struct HandlerState {
     pub degraded_mode: Arc<RwLock<bool>>,
     pub start_time: std::time::Instant,
     pub connected_clients: RwLock<usize>,
-    pub pending_events: RwLock<Vec<ViolationEvent>>,
+    /// Pending events awaiting user action. Shared with MonitorContext.
+    pub pending_events: Arc<RwLock<Vec<ViolationEvent>>>,
     pub config_toml: String,
     pub rule_engine: Arc<RwLock<RuleEngine>>,
 }
@@ -35,6 +36,7 @@ impl HandlerState {
         degraded_mode: Arc<RwLock<bool>>,
         config_toml: String,
         rule_engine: Arc<RwLock<RuleEngine>>,
+        pending_events: Arc<RwLock<Vec<ViolationEvent>>>,
     ) -> Self {
         Self {
             storage,
@@ -42,7 +44,7 @@ impl HandlerState {
             degraded_mode,
             start_time: std::time::Instant::now(),
             connected_clients: RwLock::new(0),
-            pending_events: RwLock::new(Vec::new()),
+            pending_events,
             config_toml,
             rule_engine,
         }
@@ -105,6 +107,8 @@ impl HandlerState {
             }
 
             Request::GetAgentInfo => self.handle_get_agent_info(),
+
+            Request::ResumeProcess { pid } => self.handle_resume_process(pid),
         }
     }
 
@@ -123,6 +127,45 @@ impl HandlerState {
         Response::AgentInfo {
             binary_mtime,
             version: env!("CARGO_PKG_VERSION").to_string(),
+        }
+    }
+
+    fn handle_resume_process(&self, pid: u32) -> Response {
+        #[cfg(unix)]
+        {
+            use nix::sys::signal::{kill, Signal};
+            use nix::unistd::Pid;
+
+            // Validate PID is reasonable (not 0 or 1)
+            if pid <= 1 {
+                return Response::error(format!("Cannot resume PID {}", pid));
+            }
+
+            match pid_to_raw(pid) {
+                Some(raw_pid) => {
+                    let nix_pid = Pid::from_raw(raw_pid);
+                    match kill(nix_pid, Signal::SIGCONT) {
+                        Ok(()) => {
+                            tracing::info!("Resumed process {} via ResumeProcess command", pid);
+                            Response::success(format!("Resumed process {}", pid))
+                        }
+                        Err(e) => {
+                            tracing::warn!("Failed to resume process {}: {}", pid, e);
+                            Response::error(format!("Failed to resume process {}: {}", pid, e))
+                        }
+                    }
+                }
+                None => {
+                    tracing::warn!("PID {} too large for signal operation", pid);
+                    Response::error(format!("PID {} too large for signal operation", pid))
+                }
+            }
+        }
+
+        #[cfg(not(unix))]
+        {
+            let _ = pid;
+            Response::error("ResumeProcess not supported on this platform")
         }
     }
 
@@ -491,12 +534,14 @@ mod tests {
         let mode = Arc::new(RwLock::new("block".to_string()));
         let degraded_mode = Arc::new(RwLock::new(false));
         let rule_engine = Arc::new(RwLock::new(RuleEngine::new(protected_files, Vec::new())));
+        let pending_events = Arc::new(RwLock::new(Vec::new()));
         let state = HandlerState::new(
             storage,
             mode,
             degraded_mode,
             "[agent]\nlog_level = \"info\"".to_string(),
             rule_engine,
+            pending_events,
         );
         (state, temp_dir)
     }
@@ -533,12 +578,14 @@ mod tests {
         let mode = Arc::new(RwLock::new("block".to_string()));
         let degraded_mode = Arc::new(RwLock::new(false));
         let rule_engine = Arc::new(RwLock::new(RuleEngine::new(Vec::new(), Vec::new())));
+        let pending_events = Arc::new(RwLock::new(Vec::new()));
         let state = HandlerState::new(
             storage,
             mode,
             degraded_mode,
             "test config".to_string(),
             rule_engine,
+            pending_events,
         );
 
         assert_eq!(state.config_toml, "test config");
