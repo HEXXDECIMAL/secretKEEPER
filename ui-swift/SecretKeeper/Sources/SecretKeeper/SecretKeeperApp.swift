@@ -72,8 +72,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// Reconnection state for exponential backoff.
     /// Note: Reconnection only tries to connect to the socket - it never prompts for password.
     private var reconnectAttempt = 0
-    private let maxReconnectAttempts = 3
-    private let baseReconnectDelay: TimeInterval = 5.0
+    private let maxReconnectAttempts = 10
+    private let baseReconnectDelay: TimeInterval = 0.25
     override init() {
         super.init()
         AppDelegate.shared = self

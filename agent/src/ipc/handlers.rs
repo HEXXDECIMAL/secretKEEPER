@@ -121,6 +121,7 @@ impl HandlerState {
             Request::RejectAllLearnings => self.handle_reject_all_learnings(),
             Request::CompleteLearningReview => self.handle_complete_learning_review(),
             Request::EndLearningEarly => self.handle_end_learning_early(),
+            Request::RestartLearning => self.handle_restart_learning(),
         }
     }
 
@@ -582,7 +583,22 @@ impl HandlerState {
     }
 
     fn handle_get_learning_recommendations(&self) -> Response {
-        match self.storage.get_learned_exceptions("pending") {
+        // Get current state to decide what to return
+        let current_state = self
+            .storage
+            .get_state(LEARNING_STATE_KEY)
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| "disabled".to_string());
+
+        // During learning, return all observations; during review, return only pending
+        let result = if current_state == "learning" {
+            self.storage.get_all_learned_observations()
+        } else {
+            self.storage.get_learned_exceptions("pending")
+        };
+
+        match result {
             Ok(learnings) => {
                 let recommendations: Vec<LearningRecommendation> = learnings
                     .into_iter()
@@ -688,6 +704,30 @@ impl HandlerState {
         }
 
         Response::success("Learning period ended. Please review recommendations.")
+    }
+
+    fn handle_restart_learning(&self) -> Response {
+        // Clear all learned observations
+        if let Err(e) = self.storage.clear_learned_observations() {
+            return Response::error(format!("Failed to clear observations: {}", e));
+        }
+
+        // Reset the start time to now
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        if let Err(e) = self.storage.set_state(LEARNING_START_KEY, &now.to_string()) {
+            return Response::error(format!("Failed to set learning start time: {}", e));
+        }
+
+        // Set state to Learning
+        if let Err(e) = self.storage.set_state(LEARNING_STATE_KEY, "learning") {
+            return Response::error(format!("Failed to set learning state: {}", e));
+        }
+
+        Response::success("Learning mode restarted.")
     }
 }
 

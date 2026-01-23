@@ -224,9 +224,20 @@
                                 <label>Time Remaining</label>
                                 <span id="learning-hours-remaining">--</span>
                             </div>
+                            <div class="setting-row" id="learning-stats-row" style="display: none;">
+                                <span>Programs: <strong id="learning-programs-count">0</strong></span>
+                                <span style="margin-left: 16px;">Total Observations: <strong id="learning-total-observations">0</strong></span>
+                            </div>
                             <div class="setting-row" id="learning-end-row" style="display: none;">
                                 <button class="btn btn-secondary" id="end-learning-btn">End Learning Early</button>
                             </div>
+                        </div>
+                    </div>
+
+                    <div class="settings-section" id="learning-observations-section" style="display: none;">
+                        <h2>Observed Programs</h2>
+                        <div id="observations-list" class="recommendations-list">
+                            <div class="empty-state">No observations yet</div>
                         </div>
                     </div>
 
@@ -253,6 +264,10 @@
                             Learning mode observes which applications access your protected files during normal use.
                             After the learning period, you can review recommendations and approve them as exceptions.
                         </p>
+                        <div class="setting-row" id="restart-learning-row">
+                            <label>Restart Learning Mode</label>
+                            <button class="btn btn-secondary" id="restart-learning-btn">Start New Learning Period</button>
+                        </div>
                     </div>
                 </div>
 

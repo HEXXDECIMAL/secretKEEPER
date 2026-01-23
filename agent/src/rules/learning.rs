@@ -310,6 +310,13 @@ impl LearningController {
             .unwrap_or_default()
     }
 
+    /// Get all observations (for viewing during learning period).
+    pub fn get_all_observations(&self) -> Vec<LearnedObservation> {
+        self.storage
+            .get_all_learned_observations()
+            .unwrap_or_default()
+    }
+
     /// Approve a single recommendation by ID.
     pub fn approve(&self, id: i64) -> bool {
         self.storage.approve_learning(id).unwrap_or(false)
@@ -345,6 +352,45 @@ impl LearningController {
         tracing::info!("Learning review complete: {} exceptions created", count);
 
         count
+    }
+
+    /// Restart learning mode from scratch.
+    /// Clears all existing observations and restarts the learning timer.
+    /// Can be called from any state except Disabled (config.enabled = false).
+    pub fn restart_learning(&self) -> bool {
+        if !self.config.enabled {
+            tracing::warn!("Cannot restart learning: disabled in configuration");
+            return false;
+        }
+
+        // Clear all existing observations
+        if let Err(e) = self.storage.clear_learned_observations() {
+            tracing::warn!("Failed to clear learned observations: {}", e);
+            return false;
+        }
+
+        // Reset the start time to now
+        let now = self.current_timestamp();
+        if let Err(e) = self.storage.set_state(LEARNING_START_KEY, &now.to_string()) {
+            tracing::warn!("Failed to set learning start time: {}", e);
+            return false;
+        }
+
+        // Set state to Learning
+        if let Err(e) = self
+            .storage
+            .set_state(LEARNING_STATE_KEY, &LearningState::Learning.to_string())
+        {
+            tracing::warn!("Failed to set learning state: {}", e);
+            return false;
+        }
+
+        tracing::info!(
+            "Learning mode restarted for {} hours",
+            self.config.duration_hours
+        );
+
+        true
     }
 
     /// Check if there are any pending recommendations.
@@ -560,5 +606,38 @@ mod tests {
         let exceptions = storage.get_exceptions().unwrap();
         assert_eq!(exceptions.len(), 1);
         assert_eq!(exceptions[0].source, crate::rules::ExceptionSource::Learned);
+    }
+
+    #[test]
+    fn test_restart_learning() {
+        let storage = Arc::new(Storage::in_memory().unwrap());
+        let controller = LearningController::new(test_config(), storage.clone());
+        controller.initialize();
+
+        // Record some observations
+        let ctx1 = ProcessContext::new(PathBuf::from("/usr/bin/git")).with_team_id("APPLE123");
+        controller.record_observation("ssh_keys", &ctx1);
+
+        // Verify observation exists
+        let stats = controller.stats();
+        assert_eq!(stats.pending, 1);
+
+        // Complete review to move to Complete state
+        controller.approve_all();
+        controller.complete_review();
+        assert_eq!(controller.state(), LearningState::Complete);
+
+        // Restart learning
+        assert!(controller.restart_learning());
+
+        // Verify state is back to Learning
+        assert_eq!(controller.state(), LearningState::Learning);
+        assert!(controller.is_learning());
+
+        // Verify observations were cleared
+        let stats = controller.stats();
+        assert_eq!(stats.pending, 0);
+        assert_eq!(stats.approved, 0);
+        assert_eq!(stats.rejected, 0);
     }
 }

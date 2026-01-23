@@ -21,6 +21,24 @@ fn update_tray_status(app_handle: &tauri::AppHandle, status: &str) {
     }
 }
 
+fn update_tray_for_learning(
+    app_handle: &tauri::AppHandle,
+    learning_status: &ipc_client::LearningStatus,
+) {
+    let status_text = match learning_status.state.as_str() {
+        "learning" => format!(
+            "🎓 Learning Mode ({} hours left)",
+            learning_status.hours_remaining
+        ),
+        "pending_review" => format!(
+            "⚠️ Review Required ({} pending)",
+            learning_status.pending_count
+        ),
+        _ => "Status: Protected".to_string(),
+    };
+    update_tray_status(app_handle, &status_text);
+}
+
 fn main() {
     let tray_menu = SystemTrayMenu::new()
         .add_item(CustomMenuItem::new("status", "Status: Connecting...").disabled())
@@ -86,8 +104,15 @@ fn main() {
                         continue;
                     }
 
-                    // Update tray status
-                    update_tray_status(&app_handle, "Status: Connected");
+                    // Check learning status and update tray accordingly
+                    {
+                        let mut client = client_state.lock().await;
+                        if let Ok(learning_status) = client.get_learning_status().await {
+                            update_tray_for_learning(&app_handle, &learning_status);
+                        } else {
+                            update_tray_status(&app_handle, "Status: Connected");
+                        }
+                    }
 
                     // Event loop - release mutex between reads
                     loop {
@@ -109,14 +134,15 @@ fn main() {
                                 }
                             }
                             Ok(None) => {
-                                // Timeout - no events, check connection is still alive
-                                let ping_ok = {
-                                    let mut client = client_state.lock().await;
-                                    client.ping().await.is_ok()
-                                };
-                                if !ping_ok {
+                                // Timeout - no events, check connection is still alive and refresh learning status
+                                let mut client = client_state.lock().await;
+                                if client.ping().await.is_err() {
                                     eprintln!("Lost connection to agent (ping failed)");
                                     break;
+                                }
+                                // Refresh learning status in tray
+                                if let Ok(learning_status) = client.get_learning_status().await {
+                                    update_tray_for_learning(&app_handle, &learning_status);
                                 }
                             }
                             Err(e) => {
@@ -206,6 +232,7 @@ fn main() {
             commands::reject_all_learnings,
             commands::complete_learning_review,
             commands::end_learning_early,
+            commands::restart_learning,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

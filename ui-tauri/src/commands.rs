@@ -307,3 +307,13 @@ pub async fn end_learning_early(client: tauri::State<'_, IpcState>) -> Result<()
         .await
         .map_err(|e| e.to_string())
 }
+
+#[tauri::command]
+pub async fn restart_learning(client: tauri::State<'_, IpcState>) -> Result<(), String> {
+    client
+        .lock()
+        .await
+        .restart_learning()
+        .await
+        .map_err(|e| e.to_string())
+}

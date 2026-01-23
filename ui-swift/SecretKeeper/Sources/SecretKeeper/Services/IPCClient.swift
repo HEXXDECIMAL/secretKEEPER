@@ -361,6 +361,11 @@ class IPCClient: NSObject {
         send(EndLearningEarlyRequest())
     }
 
+    /// Restart learning mode from scratch.
+    func restartLearning() {
+        send(RestartLearningRequest())
+    }
+
     // MARK: - Private
 
     private func send<T: Encodable>(_ request: T) {
@@ -732,5 +737,9 @@ private struct CompleteLearningReviewRequest: Encodable {
 
 private struct EndLearningEarlyRequest: Encodable {
     let action = "end_learning_early"
+}
+
+private struct RestartLearningRequest: Encodable {
+    let action = "restart_learning"
 }
 

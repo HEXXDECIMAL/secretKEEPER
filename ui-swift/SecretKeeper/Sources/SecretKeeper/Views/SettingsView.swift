@@ -132,6 +132,14 @@ struct LearningSettingsView: View {
                             Text("\(status.hoursRemaining) hours")
                         }
 
+                        LabeledContent("Programs Observed") {
+                            Text("\(appState.learningRecommendations.count)")
+                        }
+
+                        LabeledContent("Total Observations") {
+                            Text("\(appState.learningRecommendations.reduce(0) { $0 + Int($1.observationCount) })")
+                        }
+
                         Button("End Learning Early") {
                             AppDelegate.shared?.ipcClient?.endLearningEarly()
                             refreshLearningStatus()
@@ -149,6 +157,15 @@ struct LearningSettingsView: View {
                         LabeledContent("Rejected") {
                             Text("\(status.rejectedCount)")
                                 .foregroundColor(.red)
+                        }
+                    }
+                }
+
+                // Show observations during learning
+                if status.isLearning && !appState.learningRecommendations.isEmpty {
+                    Section("Observed Programs") {
+                        ForEach(appState.learningRecommendations) { rec in
+                            LearningObservationRow(observation: rec)
                         }
                     }
                 }
@@ -196,6 +213,14 @@ struct LearningSettingsView: View {
                         Text("Learning mode is not active. It runs automatically on first install to learn which applications normally access your protected files.")
                             .foregroundColor(.secondary)
                             .font(.caption)
+
+                        Button("Start New Learning Period") {
+                            AppDelegate.shared?.ipcClient?.restartLearning()
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                                refreshLearningStatus()
+                            }
+                        }
+                        .buttonStyle(.bordered)
                     }
                 }
             } else {
@@ -229,6 +254,42 @@ struct LearningSettingsView: View {
         if status.isPendingReview { return "Pending Review" }
         if status.isComplete { return "Complete" }
         return "Disabled"
+    }
+}
+
+/// Read-only row for showing observations during the learning period.
+struct LearningObservationRow: View {
+    let observation: LearningRecommendation
+
+    var body: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(observation.processName)
+                    .font(.headline)
+                HStack(spacing: 8) {
+                    Text(observation.categoryId.replacingOccurrences(of: "_", with: " ").capitalized)
+                        .font(.caption)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.blue.opacity(0.2))
+                        .cornerRadius(4)
+                    Text("\(observation.observationCount)×")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                if let teamId = observation.teamId {
+                    Label(teamId, systemImage: "signature")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                } else if observation.isPlatformBinary {
+                    Label("Platform Binary", systemImage: "apple.logo")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+            Spacer()
+        }
+        .padding(.vertical, 2)
     }
 }
 

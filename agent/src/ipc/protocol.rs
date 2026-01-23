@@ -106,6 +106,9 @@ pub enum Request {
 
     /// End the learning period early (transition to pending review).
     EndLearningEarly,
+
+    /// Restart learning mode from scratch (clears all observations).
+    RestartLearning,
 }
 
 /// Parameters for adding a new exception.

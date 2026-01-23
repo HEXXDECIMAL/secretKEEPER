@@ -19,6 +19,15 @@ struct MenuBarView: View {
                 disabledWarning
             }
 
+            // Learning mode banner
+            if let learning = appState.learningStatus {
+                if learning.isLearning {
+                    learningBanner(learning)
+                } else if learning.isPendingReview {
+                    reviewBanner(learning)
+                }
+            }
+
             // Status info
             if let status = appState.agentStatus {
                 statusSection(status)
@@ -68,6 +77,13 @@ struct MenuBarView: View {
         guard appState.isConnected, let status = appState.agentStatus else {
             return "xmark.shield.fill"
         }
+        // Show learning icon when in learning mode
+        if let learning = appState.learningStatus, learning.isLearning {
+            return "graduationcap.fill"
+        }
+        if let learning = appState.learningStatus, learning.isPendingReview {
+            return "list.clipboard.fill"
+        }
         switch status.mode {
         case "block":
             return "lock.shield.fill"
@@ -86,6 +102,13 @@ struct MenuBarView: View {
         guard appState.isConnected, let status = appState.agentStatus else {
             return .red
         }
+        // Show learning color when in learning mode
+        if let learning = appState.learningStatus, learning.isLearning {
+            return .blue
+        }
+        if let learning = appState.learningStatus, learning.isPendingReview {
+            return .orange
+        }
         switch status.mode {
         case "block":
             return .accentColor
@@ -103,11 +126,20 @@ struct MenuBarView: View {
     private var statusText: String {
         if !appState.isConnected {
             return "Disconnected"
-        } else if let status = appState.agentStatus {
-            return modeDisplayName(status.mode)
-        } else {
-            return "Connecting..."
         }
+        // Show learning status prominently
+        if let learning = appState.learningStatus {
+            if learning.isLearning {
+                return "Learning Mode"
+            }
+            if learning.isPendingReview {
+                return "Review Required"
+            }
+        }
+        if let status = appState.agentStatus {
+            return modeDisplayName(status.mode)
+        }
+        return "Connecting..."
     }
 
     private func modeDisplayName(_ mode: String) -> String {
@@ -122,6 +154,74 @@ struct MenuBarView: View {
             return "Protection Disabled"
         default:
             return mode.capitalized
+        }
+    }
+
+    private func learningBanner(_ learning: LearningStatus) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "graduationcap.fill")
+                    .foregroundStyle(.blue)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Learning Mode Active")
+                        .font(.caption)
+                        .fontWeight(.medium)
+                    Text("\(learning.hoursRemaining) hours remaining")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+            }
+            HStack(spacing: 16) {
+                Label("\(appState.learningRecommendations.count) programs", systemImage: "app.fill")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                Label("\(appState.learningRecommendations.reduce(0) { $0 + Int($1.observationCount) }) observations", systemImage: "eye.fill")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.blue.opacity(0.1))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func reviewBanner(_ learning: LearningStatus) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "exclamationmark.circle.fill")
+                    .foregroundStyle(.orange)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Review Required")
+                        .font(.caption)
+                        .fontWeight(.medium)
+                    Text("\(learning.pendingCount) recommendations pending")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+            }
+            Button("Review Now...") {
+                openLearningSettings()
+            }
+            .font(.caption)
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.orange.opacity(0.1))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func openLearningSettings() {
+        // Close popover first
+        AppDelegate.shared?.popover.performClose(nil)
+
+        // Wait for popover to close, then open settings
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            AppDelegate.shared?.openWindow(id: "settings")
         }
     }
 

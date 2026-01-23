@@ -541,6 +541,35 @@ impl Storage {
         Ok(results)
     }
 
+    /// Get all learned observations regardless of status.
+    pub fn get_all_learned_observations(&self) -> Result<Vec<LearnedObservation>> {
+        let conn = self.lock();
+        let mut results = Vec::new();
+
+        let mut stmt = conn.prepare(
+            "SELECT * FROM learned_exceptions ORDER BY observation_count DESC",
+        )?;
+
+        let rows = stmt.query([])?;
+        let mut rows = rows;
+
+        while let Some(row) = rows.next()? {
+            results.push(LearnedObservation {
+                id: row.get("id")?,
+                category_id: row.get("category_id")?,
+                process_path: row.get("process_path")?,
+                process_base: row.get("process_base")?,
+                team_id: row.get("team_id")?,
+                signing_id: row.get("signing_id")?,
+                is_platform_binary: row.get::<_, i32>("is_platform_binary")? != 0,
+                observation_count: row.get("observation_count")?,
+                status: row.get("status")?,
+            });
+        }
+
+        Ok(results)
+    }
+
     /// Update the status of a learned exception.
     #[allow(dead_code)]
     pub fn update_learned_status(&self, id: i64, status: &str) -> Result<bool> {
@@ -691,6 +720,13 @@ impl Storage {
             [],
         )?;
         Ok(updated as u32)
+    }
+
+    /// Clear all learned observations (for restarting learning mode).
+    pub fn clear_learned_observations(&self) -> Result<()> {
+        let conn = self.lock();
+        conn.execute("DELETE FROM learned_exceptions", [])?;
+        Ok(())
     }
 
     /// Migrate all approved learnings to the exceptions table.

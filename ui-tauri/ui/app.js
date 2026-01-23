@@ -212,6 +212,7 @@ function setupEventListeners() {
     document.getElementById('approve-all-btn').addEventListener('click', approveAllLearnings);
     document.getElementById('reject-all-btn').addEventListener('click', rejectAllLearnings);
     document.getElementById('complete-review-btn').addEventListener('click', completeLearningReview);
+    document.getElementById('restart-learning-btn').addEventListener('click', restartLearning);
 
     // Listen for Tauri events
     listen('violation', (event) => {
@@ -329,6 +330,19 @@ async function endLearningEarly() {
         refreshLearningStatus();
     } catch (e) {
         console.error('Failed to end learning early:', e);
+    }
+}
+
+async function restartLearning() {
+    if (!confirm('This will clear all current learning data and start a new learning period. Continue?')) {
+        return;
+    }
+    try {
+        await invoke('restart_learning');
+        refreshLearningStatus();
+    } catch (e) {
+        console.error('Failed to restart learning:', e);
+        alert('Failed to restart learning: ' + e);
     }
 }
 
@@ -618,7 +632,9 @@ function renderLearningStatus() {
     const statusDot = document.getElementById('learning-status-dot');
     const statusText = document.getElementById('learning-status-text');
     const timeRow = document.getElementById('learning-time-row');
+    const statsRow = document.getElementById('learning-stats-row');
     const endRow = document.getElementById('learning-end-row');
+    const observationsSection = document.getElementById('learning-observations-section');
     const reviewSection = document.getElementById('learning-review-section');
     const infoSection = document.getElementById('learning-info-section');
 
@@ -632,16 +648,24 @@ function renderLearningStatus() {
         statusDot.style.background = '#58a6ff';
         statusText.textContent = 'Learning';
         timeRow.style.display = 'flex';
+        statsRow.style.display = 'flex';
         endRow.style.display = 'block';
+        observationsSection.style.display = learningRecommendations.length > 0 ? 'block' : 'none';
         reviewSection.style.display = 'none';
         infoSection.style.display = 'block';
         document.getElementById('learning-hours-remaining').textContent = `${learningStatus.hours_remaining} hours`;
+        // Update stats
+        document.getElementById('learning-programs-count').textContent = learningRecommendations.length;
+        const totalObs = learningRecommendations.reduce((sum, r) => sum + r.observation_count, 0);
+        document.getElementById('learning-total-observations').textContent = totalObs;
     } else if (isPendingReview) {
         statusDot.className = 'status-dot';
         statusDot.style.background = '#d29922';
         statusText.textContent = 'Pending Review';
         timeRow.style.display = 'none';
+        statsRow.style.display = 'none';
         endRow.style.display = 'none';
+        observationsSection.style.display = 'none';
         reviewSection.style.display = 'block';
         infoSection.style.display = 'none';
         document.getElementById('learning-pending-count').textContent = learningStatus.pending_count;
@@ -651,7 +675,9 @@ function renderLearningStatus() {
         statusDot.className = 'status-dot connected';
         statusText.textContent = 'Complete';
         timeRow.style.display = 'none';
+        statsRow.style.display = 'none';
         endRow.style.display = 'none';
+        observationsSection.style.display = 'none';
         reviewSection.style.display = 'none';
         infoSection.style.display = 'block';
     } else {
@@ -659,13 +685,23 @@ function renderLearningStatus() {
         statusDot.style.background = '#6e7681';
         statusText.textContent = 'Disabled';
         timeRow.style.display = 'none';
+        statsRow.style.display = 'none';
         endRow.style.display = 'none';
+        observationsSection.style.display = 'none';
         reviewSection.style.display = 'none';
         infoSection.style.display = 'block';
     }
 }
 
 function renderLearningRecommendations() {
+    const isLearning = learningStatus && learningStatus.state === 'learning';
+
+    // Render observations during learning
+    if (isLearning) {
+        renderLearningObservations();
+    }
+
+    // Render recommendations for review
     const container = document.getElementById('recommendations-list');
     if (!container) return;
 
@@ -698,6 +734,30 @@ function renderLearningRecommendations() {
                         <line x1="6" y1="6" x2="18" y2="18"></line>
                     </svg>
                 </button>
+            </div>
+        </div>
+    `).join('');
+}
+
+function renderLearningObservations() {
+    const container = document.getElementById('observations-list');
+    if (!container) return;
+
+    if (learningRecommendations.length === 0) {
+        container.innerHTML = '<div class="empty-state">No observations yet</div>';
+        return;
+    }
+
+    container.innerHTML = learningRecommendations.map(r => `
+        <div class="observation-row">
+            <div class="recommendation-info">
+                <div class="recommendation-process">${r.process_name}</div>
+                <div class="recommendation-meta">
+                    <span class="category-badge">${formatCategoryName(r.category_id)}</span>
+                    <span>${r.observation_count}×</span>
+                    ${r.team_id ? `<span class="team-id">${r.team_id}</span>` : ''}
+                    ${r.is_platform_binary ? '<span class="platform-badge">Platform</span>' : ''}
+                </div>
             </div>
         </div>
     `).join('');

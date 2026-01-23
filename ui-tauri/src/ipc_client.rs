@@ -209,6 +209,7 @@ pub enum Request {
     RejectAllLearnings,
     CompleteLearningReview,
     EndLearningEarly,
+    RestartLearning,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -629,6 +630,14 @@ impl IpcClient {
 
     pub async fn end_learning_early(&mut self) -> io::Result<()> {
         match self.send(&Request::EndLearningEarly).await? {
+            Response::Success { .. } => Ok(()),
+            Response::Error { message } => Err(io::Error::other(message)),
+            _ => Err(unexpected_response()),
+        }
+    }
+
+    pub async fn restart_learning(&mut self) -> io::Result<()> {
+        match self.send(&Request::RestartLearning).await? {
             Response::Success { .. } => Ok(()),
             Response::Error { message } => Err(io::Error::other(message)),
             _ => Err(unexpected_response()),
