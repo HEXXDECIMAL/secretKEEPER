@@ -682,6 +682,316 @@ base = "gpg2"
 euid = "501-65533"
 
 # ============================================================================
+# AI SERVICE CREDENTIALS
+# ============================================================================
+[[protected_files]]
+id = "openai_credentials"
+patterns = ["~/.openai", "~/.config/openai/*"]
+
+[[protected_files.allow]]
+base = "python*"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "node"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "openai"
+euid = "501-65533"
+
+[[protected_files]]
+id = "anthropic_credentials"
+patterns = ["~/.anthropic/*", "~/.config/anthropic/*"]
+
+[[protected_files.allow]]
+base = "python*"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "node"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "claude"
+euid = "501-65533"
+
+[[protected_files]]
+id = "huggingface_credentials"
+patterns = ["~/.huggingface/token", "~/.cache/huggingface/token"]
+
+[[protected_files.allow]]
+base = "python*"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "huggingface-cli"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "transformers-cli"
+euid = "501-65533"
+
+[[protected_files]]
+id = "google_ai_credentials"
+patterns = ["~/.config/google-ai-studio/*", "~/.config/generativeai/*"]
+
+[[protected_files.allow]]
+base = "python*"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "node"
+euid = "501-65533"
+
+[[protected_files]]
+id = "cohere_credentials"
+patterns = ["~/.cohere/*", "~/.config/cohere/*"]
+
+[[protected_files.allow]]
+base = "python*"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "node"
+euid = "501-65533"
+
+[[protected_files]]
+id = "replicate_credentials"
+patterns = ["~/.replicate/*", "~/.config/replicate/*"]
+
+[[protected_files.allow]]
+base = "python*"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "node"
+euid = "501-65533"
+
+[[protected_files]]
+id = "mistral_credentials"
+patterns = ["~/.mistral/*", "~/.config/mistral/*"]
+
+[[protected_files.allow]]
+base = "python*"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "node"
+euid = "501-65533"
+
+# ============================================================================
+# ENVIRONMENT FILES (often contain API keys)
+# ============================================================================
+[[protected_files]]
+id = "dotenv_files"
+patterns = ["~/.env", "~/.env.local", "~/*/.env", "~/*/.env.local", "~/*/*/.env", "~/*/*/.env.local"]
+
+[[protected_files.allow]]
+base = "node"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "python*"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "ruby"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "php"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "go"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "cargo"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "docker"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "docker-compose"
+euid = "501-65533"
+
+# ============================================================================
+# MESSAGING APP TOKENS
+# ============================================================================
+[[protected_files]]
+id = "discord_tokens"
+patterns = ["~/.config/discord*/Local Storage/leveldb/*", "~/Library/Application Support/discord*/Local Storage/leveldb/*"]
+
+[[protected_files.allow]]
+base = "Discord*"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "electron"
+euid = "501-65533"
+
+[[protected_files]]
+id = "slack_tokens"
+patterns = ["~/.config/Slack/storage/*", "~/Library/Application Support/Slack/storage/*", "~/Library/Containers/com.tinyspeck.slackmacgap/Data/Library/Application Support/Slack/storage/*"]
+
+[[protected_files.allow]]
+base = "Slack*"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "electron"
+euid = "501-65533"
+
+[[protected_files]]
+id = "telegram_data"
+patterns = ["~/.local/share/TelegramDesktop/tdata/*", "~/Library/Application Support/Telegram Desktop/tdata/*", "~/Library/Group Containers/*.keepcoder.Telegram/appstore/*"]
+
+[[protected_files.allow]]
+base = "Telegram*"
+euid = "501-65533"
+
+[[protected_files]]
+id = "signal_data"
+patterns = ["~/.config/Signal/*", "~/Library/Application Support/Signal/*"]
+
+[[protected_files.allow]]
+base = "Signal*"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "electron"
+euid = "501-65533"
+
+# ============================================================================
+# CRYPTOCURRENCY WALLETS
+# ============================================================================
+[[protected_files]]
+id = "bitcoin_wallet"
+patterns = ["~/.bitcoin/wallet.dat", "~/.bitcoin/wallets/*", "~/Library/Application Support/Bitcoin/wallet.dat", "~/Library/Application Support/Bitcoin/wallets/*"]
+
+[[protected_files.allow]]
+base = "bitcoin*"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "Bitcoin*"
+euid = "501-65533"
+
+[[protected_files]]
+id = "ethereum_wallet"
+patterns = ["~/.ethereum/keystore/*", "~/Library/Ethereum/keystore/*"]
+
+[[protected_files.allow]]
+base = "geth"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "Mist"
+euid = "501-65533"
+
+[[protected_files]]
+id = "electrum_wallet"
+patterns = ["~/.electrum/wallets/*", "~/Library/Application Support/Electrum/wallets/*"]
+
+[[protected_files.allow]]
+base = "Electrum*"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "python*"
+euid = "501-65533"
+
+[[protected_files]]
+id = "exodus_wallet"
+patterns = ["~/.config/Exodus/exodus.wallet/*", "~/Library/Application Support/Exodus/exodus.wallet/*"]
+
+[[protected_files.allow]]
+base = "Exodus*"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "electron"
+euid = "501-65533"
+
+[[protected_files]]
+id = "atomic_wallet"
+patterns = ["~/.config/atomic/Local Storage/*", "~/Library/Application Support/atomic/Local Storage/*"]
+
+[[protected_files.allow]]
+base = "Atomic*"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "electron"
+euid = "501-65533"
+
+[[protected_files]]
+id = "ledger_live"
+patterns = ["~/.config/Ledger Live/*", "~/Library/Application Support/Ledger Live/*"]
+
+[[protected_files.allow]]
+base = "Ledger*"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "electron"
+euid = "501-65533"
+
+[[protected_files]]
+id = "coinomi_wallet"
+patterns = ["~/.config/Coinomi/wallets/*", "~/Library/Application Support/Coinomi/wallets/*"]
+
+[[protected_files.allow]]
+base = "Coinomi*"
+euid = "501-65533"
+
+[[protected_files]]
+id = "wasabi_wallet"
+patterns = ["~/.walletwasabi/client/Wallets/*", "~/Library/Application Support/WalletWasabi/Client/Wallets/*"]
+
+[[protected_files.allow]]
+base = "WasabiWallet*"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "wassabee*"
+euid = "501-65533"
+
+# ============================================================================
+# GAME PLATFORMS
+# ============================================================================
+[[protected_files]]
+id = "steam_config"
+patterns = ["~/.steam/steam/config/*", "~/.local/share/Steam/config/*", "~/Library/Application Support/Steam/config/*"]
+
+[[protected_files.allow]]
+base = "steam*"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "Steam*"
+euid = "501-65533"
+
+# ============================================================================
+# FTP/SFTP CLIENTS
+# ============================================================================
+[[protected_files]]
+id = "filezilla_credentials"
+patterns = ["~/.config/filezilla/sitemanager.xml", "~/.config/filezilla/recentservers.xml", "~/.filezilla/sitemanager.xml", "~/.filezilla/recentservers.xml"]
+
+[[protected_files.allow]]
+base = "filezilla*"
+euid = "501-65533"
+
+[[protected_files.allow]]
+base = "FileZilla*"
+euid = "501-65533"
+
+# ============================================================================
 # EXCLUDED PATTERNS (not sensitive)
 # ============================================================================
 excluded_patterns = [

@@ -192,6 +192,34 @@ struct ProtectedCategoryRow: View {
         case "mysql": return "MySQL Credentials"
         // Network
         case "netrc": return "Network Credentials (.netrc)"
+        // AI services
+        case "openai_credentials": return "OpenAI API Credentials"
+        case "anthropic_credentials": return "Anthropic/Claude API Credentials"
+        case "huggingface_credentials": return "Hugging Face Token"
+        case "google_ai_credentials": return "Google AI Studio Credentials"
+        case "cohere_credentials": return "Cohere API Credentials"
+        case "replicate_credentials": return "Replicate API Credentials"
+        case "mistral_credentials": return "Mistral API Credentials"
+        // Environment files
+        case "dotenv_files": return "Environment Files (.env)"
+        // Messaging apps
+        case "discord_tokens": return "Discord Tokens"
+        case "slack_tokens": return "Slack Tokens"
+        case "telegram_data": return "Telegram Data"
+        case "signal_data": return "Signal Data"
+        // Cryptocurrency wallets
+        case "bitcoin_wallet": return "Bitcoin Core Wallet"
+        case "ethereum_wallet": return "Ethereum Keystore"
+        case "electrum_wallet": return "Electrum Wallet"
+        case "exodus_wallet": return "Exodus Wallet"
+        case "atomic_wallet": return "Atomic Wallet"
+        case "ledger_live": return "Ledger Live"
+        case "coinomi_wallet": return "Coinomi Wallet"
+        case "wasabi_wallet": return "Wasabi Wallet"
+        // Game platforms
+        case "steam_config": return "Steam Config"
+        // FTP clients
+        case "filezilla_credentials": return "FileZilla Credentials"
         // Fallback: replace underscores and capitalize each word
         default:
             return category.id
@@ -236,6 +264,21 @@ struct ProtectedCategoryRow: View {
         case "postgresql", "mysql": return "cylinder"
         // Network
         case "netrc": return "network"
+        // AI services
+        case "openai_credentials", "anthropic_credentials", "google_ai_credentials",
+             "huggingface_credentials", "cohere_credentials", "replicate_credentials",
+             "mistral_credentials": return "brain"
+        // Environment files
+        case "dotenv_files": return "doc.text"
+        // Messaging apps
+        case "discord_tokens", "slack_tokens", "telegram_data", "signal_data": return "message"
+        // Cryptocurrency wallets
+        case "bitcoin_wallet", "ethereum_wallet", "electrum_wallet", "exodus_wallet",
+             "atomic_wallet", "ledger_live", "coinomi_wallet", "wasabi_wallet": return "bitcoinsign.circle"
+        // Game platforms
+        case "steam_config": return "gamecontroller"
+        // FTP clients
+        case "filezilla_credentials": return "externaldrive.connected.to.line.below"
         default: return "doc.badge.gearshape"
         }
     }
