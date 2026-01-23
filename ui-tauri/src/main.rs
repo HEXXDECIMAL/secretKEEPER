@@ -135,6 +135,10 @@ fn main() {
             commands::allow_permanently,
             commands::kill_process,
             commands::reconnect,
+            commands::get_categories,
+            commands::set_category_enabled,
+            commands::resume_process,
+            commands::export_violations,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

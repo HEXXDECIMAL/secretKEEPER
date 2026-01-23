@@ -195,21 +195,37 @@ else
 	@exit 1
 endif
 
+upgrade-freebsd: build-release
+	@echo "Upgrading SecretKeeper agent on FreeBSD..."
+	sudo service secretkeeper stop || true
+	sudo cp target/release/secretkeeper-agent $(INSTALL_DIR)/
+	sudo service secretkeeper start
+	@echo "Upgrade complete"
+
 upgrade:
 ifeq ($(UNAME),Darwin)
 	$(MAKE) upgrade-macos
 else ifeq ($(UNAME),Linux)
 	$(MAKE) upgrade-linux
+else ifeq ($(UNAME),FreeBSD)
+	$(MAKE) upgrade-freebsd
 else
 	@echo "Upgrade not yet implemented for $(UNAME)"
 	@exit 1
 endif
+
+restart-freebsd:
+	@echo "Restarting SecretKeeper agent on FreeBSD..."
+	sudo service secretkeeper restart
+	@echo "Agent restarted"
 
 restart:
 ifeq ($(UNAME),Darwin)
 	$(MAKE) restart-macos
 else ifeq ($(UNAME),Linux)
 	sudo systemctl restart secretkeeper
+else ifeq ($(UNAME),FreeBSD)
+	$(MAKE) restart-freebsd
 else
 	@echo "Restart not yet implemented for $(UNAME)"
 	@exit 1

@@ -61,6 +61,17 @@
             <div id="dashboard-view" class="view active">
                 <h1>Dashboard</h1>
 
+                <!-- Agent Status Card -->
+                <div class="agent-status-card" id="agent-status-card">
+                    <div class="status-indicator">
+                        <span class="status-dot disconnected" id="agent-status-dot"></span>
+                        <span id="agent-status-text">Not Running</span>
+                    </div>
+                    <div class="status-details">
+                        <span id="agent-mode-badge" class="badge badge-blocked">--</span>
+                    </div>
+                </div>
+
                 <div class="stats-grid">
                     <div class="stat-card">
                         <div class="stat-label">Mode</div>
@@ -75,8 +86,8 @@
                         <div class="stat-value" id="stat-violations">--</div>
                     </div>
                     <div class="stat-card">
-                        <div class="stat-label">Active Exceptions</div>
-                        <div class="stat-value" id="stat-exceptions">--</div>
+                        <div class="stat-label">Pending Events</div>
+                        <div class="stat-value" id="stat-pending">--</div>
                     </div>
                 </div>
 
@@ -92,19 +103,20 @@
                     <h1>Violation History</h1>
                     <div class="actions">
                         <input type="text" class="search-input" id="history-search" placeholder="Search violations...">
-                        <button class="btn btn-secondary" id="refresh-history">
+                        <button class="btn btn-secondary" id="refresh-history" title="Refresh">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <path d="M23 4v6h-6"/>
                                 <path d="M1 20v-6h6"/>
                                 <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
                             </svg>
                         </button>
-                        <button class="btn btn-secondary" id="export-history">
+                        <button class="btn btn-secondary" id="export-history" title="Export to JSON">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
                                 <polyline points="7 10 12 15 17 10"/>
                                 <line x1="12" y1="15" x2="12" y2="3"/>
                             </svg>
+                            Export
                         </button>
                     </div>
                 </div>
@@ -144,49 +156,102 @@
                 </div>
             </div>
 
-            <!-- Settings View -->
+            <!-- Settings View with Tabs -->
             <div id="settings-view" class="view">
                 <h1>Settings</h1>
 
-                <div class="settings-section">
-                    <h2>Enforcement Mode</h2>
-                    <div class="setting-row">
-                        <label class="radio-label">
-                            <input type="radio" name="mode" value="block" checked>
-                            <span>Block</span>
-                            <small>Prevent unauthorized access attempts</small>
-                        </label>
+                <div class="settings-tabs">
+                    <button class="settings-tab active" data-tab="general">General</button>
+                    <button class="settings-tab" data-tab="protection">Protection</button>
+                    <button class="settings-tab" data-tab="agent">Agent</button>
+                </div>
+
+                <!-- General Tab -->
+                <div id="settings-general" class="settings-tab-content active">
+                    <div class="settings-section">
+                        <h2>Enforcement Mode</h2>
+                        <div class="setting-row">
+                            <label class="radio-label">
+                                <input type="radio" name="mode" value="block" checked>
+                                <span>Block</span>
+                                <small>Prevent unauthorized access attempts</small>
+                            </label>
+                        </div>
+                        <div class="setting-row">
+                            <label class="radio-label">
+                                <input type="radio" name="mode" value="best-effort">
+                                <span>Best Effort</span>
+                                <small>Suspend processes after detection (cannot pre-block)</small>
+                            </label>
+                        </div>
+                        <div class="setting-row">
+                            <label class="radio-label">
+                                <input type="radio" name="mode" value="monitor">
+                                <span>Monitor Only</span>
+                                <small>Log violations without blocking</small>
+                            </label>
+                        </div>
                     </div>
-                    <div class="setting-row">
-                        <label class="radio-label">
-                            <input type="radio" name="mode" value="monitor">
-                            <span>Monitor Only</span>
-                            <small>Log violations without blocking</small>
-                        </label>
+
+                    <div class="settings-section">
+                        <h2>Data Retention</h2>
+                        <div class="setting-row">
+                            <label>Keep violation history for</label>
+                            <select id="retention-days">
+                                <option value="7">7 days</option>
+                                <option value="30" selected>30 days</option>
+                                <option value="90">90 days</option>
+                                <option value="365">365 days</option>
+                            </select>
+                        </div>
                     </div>
                 </div>
 
-                <div class="settings-section">
-                    <h2>Data Retention</h2>
-                    <div class="setting-row">
-                        <label>Keep violation history for</label>
-                        <select id="retention-days">
-                            <option value="7">7 days</option>
-                            <option value="30" selected>30 days</option>
-                            <option value="90">90 days</option>
-                            <option value="365">365 days</option>
-                        </select>
+                <!-- Protection Tab -->
+                <div id="settings-protection" class="settings-tab-content">
+                    <div class="settings-section">
+                        <h2>Protected File Categories</h2>
+                        <p class="settings-description">Toggle categories to enable or disable protection for specific file types.</p>
+                        <div id="categories-list" class="categories-list">
+                            <div class="empty-state">Loading categories...</div>
+                        </div>
                     </div>
                 </div>
 
-                <div class="settings-section">
-                    <h2>Connection</h2>
-                    <div class="setting-row">
-                        <label>Socket Path</label>
-                        <code>/var/run/secretkeeper.sock</code>
+                <!-- Agent Tab -->
+                <div id="settings-agent" class="settings-tab-content">
+                    <div class="settings-section">
+                        <h2>Agent Status</h2>
+                        <div class="setting-row">
+                            <label>Status</label>
+                            <div class="status-indicator">
+                                <span class="status-dot" id="settings-status-dot"></span>
+                                <span id="settings-status-text">Unknown</span>
+                            </div>
+                        </div>
+                        <div class="setting-row">
+                            <label>Mode</label>
+                            <span id="settings-mode">--</span>
+                        </div>
+                        <div class="setting-row">
+                            <label>Uptime</label>
+                            <span id="settings-uptime">--</span>
+                        </div>
+                        <div class="setting-row">
+                            <label>Connected Clients</label>
+                            <span id="settings-clients">--</span>
+                        </div>
                     </div>
-                    <div class="setting-row">
-                        <button class="btn btn-secondary" id="reconnect-btn">Reconnect</button>
+
+                    <div class="settings-section">
+                        <h2>Connection</h2>
+                        <div class="setting-row">
+                            <label>Socket Path</label>
+                            <code>/var/run/secretkeeper.sock</code>
+                        </div>
+                        <div class="setting-row">
+                            <button class="btn btn-secondary" id="reconnect-btn">Reconnect</button>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -196,7 +261,7 @@
     <!-- Violation Detail Modal -->
     <div id="violation-modal" class="modal hidden">
         <div class="modal-backdrop"></div>
-        <div class="modal-content">
+        <div class="modal-content modal-large">
             <div class="modal-header">
                 <h2>Violation Details</h2>
                 <button class="modal-close">&times;</button>
@@ -205,6 +270,7 @@
             </div>
             <div class="modal-footer">
                 <button class="btn btn-danger" id="modal-kill">Kill Process</button>
+                <button class="btn btn-secondary" id="modal-resume" style="display: none;">Resume Parent</button>
                 <button class="btn btn-secondary" id="modal-exception">Add Exception...</button>
                 <button class="btn btn-warning" id="modal-allow-once">Allow Once</button>
                 <button class="btn btn-primary" id="modal-allow-always">Always Allow</button>
@@ -242,7 +308,7 @@
                     </div>
 
                     <div class="form-group hidden" id="code-signer-group">
-                        <label for="code-signer">Team ID</label>
+                        <label for="code-signer">Team ID or Signing ID</label>
                         <input type="text" id="code-signer" class="mono" placeholder="TEAM123456">
                     </div>
 

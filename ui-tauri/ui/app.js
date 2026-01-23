@@ -5,6 +5,7 @@ const { listen } = window.__TAURI__.event;
 let currentView = 'dashboard';
 let violations = [];
 let exceptions = [];
+let categories = [];
 let selectedViolation = null;
 let status = null;
 
@@ -24,12 +25,14 @@ const modals = {
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
     setupNavigation();
+    setupSettingsTabs();
     setupModals();
     setupForms();
     setupEventListeners();
     refreshStatus();
     refreshViolations();
     refreshExceptions();
+    refreshCategories();
 });
 
 // Navigation
@@ -59,6 +62,29 @@ function navigateTo(view) {
     // Refresh data when switching views
     if (view === 'history') refreshViolations();
     if (view === 'exceptions') refreshExceptions();
+    if (view === 'settings') {
+        refreshCategories();
+        refreshStatus();
+    }
+}
+
+// Settings Tabs
+function setupSettingsTabs() {
+    document.querySelectorAll('.settings-tab').forEach(tab => {
+        tab.addEventListener('click', () => {
+            const tabId = tab.dataset.tab;
+
+            // Update tab buttons
+            document.querySelectorAll('.settings-tab').forEach(t => {
+                t.classList.toggle('active', t.dataset.tab === tabId);
+            });
+
+            // Update tab content
+            document.querySelectorAll('.settings-tab-content').forEach(content => {
+                content.classList.toggle('active', content.id === `settings-${tabId}`);
+            });
+        });
+    });
 }
 
 // Modals
@@ -102,6 +128,17 @@ function setupModals() {
     document.getElementById('modal-exception').addEventListener('click', () => {
         if (selectedViolation) {
             showExceptionModal(selectedViolation);
+        }
+    });
+
+    // Resume button for stopped parent processes
+    document.getElementById('modal-resume').addEventListener('click', async () => {
+        if (selectedViolation) {
+            const stoppedParent = findStoppedParent(selectedViolation.process_tree);
+            if (stoppedParent) {
+                await resumeProcess(stoppedParent.pid);
+                closeAllModals();
+            }
         }
     });
 }
@@ -151,6 +188,9 @@ function setupEventListeners() {
     // Refresh buttons
     document.getElementById('refresh-history').addEventListener('click', refreshViolations);
     document.getElementById('reconnect-btn').addEventListener('click', reconnect);
+
+    // Export button
+    document.getElementById('export-history').addEventListener('click', exportViolations);
 
     // Mode radio buttons
     document.querySelectorAll('input[name="mode"]').forEach(radio => {
@@ -205,12 +245,32 @@ async function refreshExceptions() {
     }
 }
 
+async function refreshCategories() {
+    try {
+        categories = await invoke('get_categories');
+        renderCategories();
+    } catch (e) {
+        console.error('Failed to get categories:', e);
+        // Show empty state
+        document.getElementById('categories-list').innerHTML =
+            '<div class="empty-state">Could not load categories</div>';
+    }
+}
+
 async function setMode(mode) {
     try {
         await invoke('set_mode', { mode });
         refreshStatus();
     } catch (e) {
         console.error('Failed to set mode:', e);
+    }
+}
+
+async function setCategoryEnabled(categoryId, enabled) {
+    try {
+        await invoke('set_category_enabled', { categoryId, enabled });
+    } catch (e) {
+        console.error('Failed to set category enabled:', e);
     }
 }
 
@@ -238,6 +298,14 @@ async function killProcess(eventId) {
     }
 }
 
+async function resumeProcess(pid) {
+    try {
+        await invoke('resume_process', { pid });
+    } catch (e) {
+        console.error('Failed to resume process:', e);
+    }
+}
+
 async function saveException() {
     const type = document.querySelector('input[name="exception-type"]:checked').value;
     const filePattern = document.getElementById('file-pattern').value;
@@ -246,11 +314,10 @@ async function saveException() {
     const comment = document.getElementById('comment').value || null;
 
     const processPath = type === 'process' ? document.getElementById('process-path').value : null;
-    // For signer type, use the code-signer input as signing_id (most common case for platform binaries)
     const signerValue = type === 'signer' ? document.getElementById('code-signer').value : null;
     const signerType = signerValue ? 'signing_id' : null;
     const signingId = signerValue;
-    const teamId = null; // Team ID exceptions are typically created via AllowPermanently
+    const teamId = null;
     const expiresHours = isPermanent ? null : parseInt(document.getElementById('expires-hours').value);
 
     try {
@@ -291,17 +358,61 @@ async function reconnect() {
     }
 }
 
+async function exportViolations() {
+    try {
+        const json = await invoke('export_violations', { limit: 1000 });
+
+        // Create download
+        const blob = new Blob([json], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `secretkeeper-violations-${new Date().toISOString().split('T')[0]}.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    } catch (e) {
+        console.error('Failed to export violations:', e);
+        alert('Failed to export: ' + e);
+    }
+}
+
 // Rendering
 function updateStatusDisplay() {
     if (status) {
-        document.getElementById('stat-mode').textContent = status.mode.charAt(0).toUpperCase() + status.mode.slice(1);
+        const modeDisplay = status.mode.replace('-', ' ');
+        document.getElementById('stat-mode').textContent = modeDisplay.charAt(0).toUpperCase() + modeDisplay.slice(1);
         document.getElementById('stat-uptime').textContent = formatUptime(status.uptime_secs);
         document.getElementById('stat-violations').textContent = status.total_violations.toLocaleString();
-        document.getElementById('stat-exceptions').textContent = status.active_exceptions.toLocaleString();
+        document.getElementById('stat-pending').textContent = status.events_pending.toLocaleString();
 
         // Update mode radio
         const modeRadio = document.querySelector(`input[name="mode"][value="${status.mode}"]`);
         if (modeRadio) modeRadio.checked = true;
+
+        // Update agent status card
+        const statusDot = document.getElementById('agent-status-dot');
+        const statusText = document.getElementById('agent-status-text');
+        const modeBadge = document.getElementById('agent-mode-badge');
+
+        if (status.degraded_mode) {
+            statusDot.className = 'status-dot limited';
+            statusText.textContent = 'Limited Protection';
+        } else {
+            statusDot.className = 'status-dot connected';
+            statusText.textContent = 'Protected';
+        }
+
+        modeBadge.textContent = modeDisplay.charAt(0).toUpperCase() + modeDisplay.slice(1);
+        modeBadge.className = `badge badge-${status.mode === 'block' ? 'blocked' : 'logged'}`;
+
+        // Update settings tab
+        document.getElementById('settings-status-dot').className = status.degraded_mode ? 'status-dot limited' : 'status-dot connected';
+        document.getElementById('settings-status-text').textContent = status.degraded_mode ? 'Limited' : 'Protected';
+        document.getElementById('settings-mode').textContent = modeDisplay.charAt(0).toUpperCase() + modeDisplay.slice(1);
+        document.getElementById('settings-uptime').textContent = formatUptime(status.uptime_secs);
+        document.getElementById('settings-clients').textContent = status.connected_clients;
     }
 }
 
@@ -313,6 +424,14 @@ function updateConnectionStatus(connected) {
     dot.classList.toggle('connected', connected);
     dot.classList.toggle('disconnected', !connected);
     text.textContent = connected ? 'Connected' : 'Disconnected';
+
+    // Update agent status card if disconnected
+    if (!connected) {
+        const statusDot = document.getElementById('agent-status-dot');
+        const statusText = document.getElementById('agent-status-text');
+        statusDot.className = 'status-dot disconnected';
+        statusText.textContent = 'Not Running';
+    }
 }
 
 function renderViolations() {
@@ -389,8 +508,31 @@ function renderExceptions() {
                 </div>
             </div>
             <div class="exception-actions">
-                <button class="btn btn-danger" onclick="removeException(${e.id})">Remove</button>
+                <button class="btn btn-danger btn-sm" onclick="removeException(${e.id})">Remove</button>
             </div>
+        </div>
+    `).join('');
+}
+
+function renderCategories() {
+    const container = document.getElementById('categories-list');
+
+    if (categories.length === 0) {
+        container.innerHTML = '<div class="empty-state">No categories available</div>';
+        return;
+    }
+
+    container.innerHTML = categories.map(c => `
+        <div class="category-row">
+            <label class="category-toggle">
+                <input type="checkbox" ${c.enabled ? 'checked' : ''}
+                       onchange="setCategoryEnabled('${c.id}', this.checked)">
+                <span class="category-icon">${getCategoryIcon(c.id)}</span>
+                <div class="category-info">
+                    <div class="category-name">${formatCategoryName(c.id)}</div>
+                    <div class="category-patterns">${c.patterns.join(', ')}</div>
+                </div>
+            </label>
         </div>
     `).join('');
 }
@@ -398,6 +540,16 @@ function renderExceptions() {
 function showViolationDetail(violation) {
     selectedViolation = violation;
     const container = document.getElementById('violation-detail');
+
+    // Check for stopped parent process
+    const stoppedParent = findStoppedParent(violation.process_tree);
+    const resumeBtn = document.getElementById('modal-resume');
+    if (stoppedParent) {
+        resumeBtn.style.display = 'inline-flex';
+        resumeBtn.textContent = `Resume ${stoppedParent.name} (PID ${stoppedParent.pid})`;
+    } else {
+        resumeBtn.style.display = 'none';
+    }
 
     container.innerHTML = `
         <div class="detail-section">
@@ -473,7 +625,7 @@ function renderProcessTree(tree) {
     return `
         <div class="process-tree">
             ${tree.map((entry, index) => `
-                <div class="process-tree-entry">
+                <div class="process-tree-entry ${index === 0 ? 'violator' : ''}">
                     <div class="tree-indent">
                         ${Array(index).fill('<div class="tree-line"></div>').join('')}
                         ${index > 0 ? '<div class="tree-connector"></div>' : ''}
@@ -484,6 +636,7 @@ function renderProcessTree(tree) {
                             <span class="name">${entry.name}</span>
                             <span class="pid">PID ${entry.pid}</span>
                             ${entry.ppid ? `<span class="pid">PPID ${entry.ppid}</span>` : ''}
+                            ${entry.state ? `<span class="process-state state-${entry.state.toLowerCase()}">${entry.state}</span>` : ''}
                         </div>
                         <div class="process-path">${entry.path}</div>
                         <div class="process-meta">
@@ -577,9 +730,30 @@ function formatUptime(seconds) {
     return `${minutes}m`;
 }
 
+function formatCategoryName(id) {
+    return id.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
+
+function getCategoryIcon(id) {
+    const icons = {
+        'ssh_keys': '🔑',
+        'aws_credentials': '☁️',
+        'gcp_credentials': '☁️',
+        'azure_credentials': '☁️',
+        'kubeconfig': '🎮',
+        'gpg_keys': '🔐',
+        'npm_tokens': '📦',
+        'git_credentials': '🔀',
+        'docker_config': '🐳',
+        'default': '📄'
+    };
+    return icons[id] || icons['default'];
+}
+
 function getSigningStatus(entry) {
     if (entry.is_platform_binary) return 'platform';
-    if (entry.team_id || entry.signing_id) return 'signed';
+    if (entry.team_id) return 'signed';
+    if (entry.signing_id) return 'adhoc';
     return 'unsigned';
 }
 
@@ -587,7 +761,19 @@ function getSigningDot(status) {
     const colors = {
         platform: '#58a6ff',
         signed: '#a371f7',
+        adhoc: '#d29922',
         unsigned: '#f85149'
     };
     return `<span style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: ${colors[status] || colors.unsigned}; margin-right: 4px;"></span>`;
+}
+
+function findStoppedParent(tree) {
+    if (!tree) return null;
+    // Skip first entry (the violator), look for stopped parent
+    for (let i = 1; i < tree.length; i++) {
+        if (tree[i].state && tree[i].state.toLowerCase() === 'stopped') {
+            return tree[i];
+        }
+    }
+    return null;
 }
