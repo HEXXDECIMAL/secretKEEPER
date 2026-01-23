@@ -1,8 +1,8 @@
-//! FreeBSD DTrace-based file access monitor.
+//! NetBSD DTrace-based file access monitor.
 //!
 //! # Overview
 //!
-//! This module uses DTrace on FreeBSD to monitor file access events. DTrace probes
+//! This module uses DTrace on NetBSD to monitor file access events. DTrace probes
 //! the `syscall::openat:entry` and `syscall::open:entry` syscalls to capture file
 //! access attempts.
 //!
@@ -11,15 +11,21 @@
 //! - **Cannot block access**: DTrace is an observability tool, not a security framework.
 //!   File access is detected AFTER it begins, not before.
 //!
-//! - **Best-effort mitigation**: Like macOS eslogger, we SIGSTOP violating processes
-//!   after detection to prevent further exfiltration.
+//! - **Best-effort mitigation**: Like macOS eslogger and FreeBSD, we SIGSTOP violating
+//!   processes after detection to prevent further exfiltration.
 //!
 //! - **Requires root**: DTrace requires root privileges to run.
 //!
 //! # Requirements
 //!
-//! - FreeBSD with DTrace enabled (default in FreeBSD 10+)
+//! - NetBSD 8+ with DTrace enabled (MKDTRACE=yes in build)
 //! - Root privileges to run the agent
+//!
+//! # NetBSD-Specific Notes
+//!
+//! - DTrace on NetBSD supports SDT and FBT providers, with syscall provider available
+//! - Process executable lookup uses /proc/<pid>/exe when procfs is mounted,
+//!   falling back to sysctl kern.proc.pathname
 
 use super::MonitorContext;
 use crate::error::{Error, Result};
@@ -33,8 +39,11 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::Notify;
 
-/// Path to dtrace binary
+/// Path to dtrace binary - standard location on NetBSD
 const DTRACE_PATH: &str = "/usr/sbin/dtrace";
+
+/// Alternate path if installed via pkgsrc
+const DTRACE_PATH_PKGSRC: &str = "/usr/pkg/sbin/dtrace";
 
 /// DTrace script that probes file open syscalls.
 /// Output format: pid|ppid|uid|path
@@ -63,21 +72,40 @@ pub struct DtraceMonitor {
     shutdown: Arc<AtomicBool>,
     /// Notify background tasks to check shutdown
     shutdown_notify: Arc<Notify>,
+    /// Path to dtrace binary (detected at runtime)
+    dtrace_path: String,
 }
 
 impl DtraceMonitor {
     pub fn new(context: Arc<MonitorContext>) -> Self {
+        // Detect dtrace path at construction time
+        let dtrace_path = Self::find_dtrace_path();
         Self {
             context,
             child: None,
             shutdown: Arc::new(AtomicBool::new(false)),
             shutdown_notify: Arc::new(Notify::new()),
+            dtrace_path,
         }
     }
 
+    /// Find the dtrace binary path.
+    fn find_dtrace_path() -> String {
+        // Check standard location first
+        if std::path::Path::new(DTRACE_PATH).exists() {
+            return DTRACE_PATH.to_string();
+        }
+        // Check pkgsrc location
+        if std::path::Path::new(DTRACE_PATH_PKGSRC).exists() {
+            return DTRACE_PATH_PKGSRC.to_string();
+        }
+        // Default to standard path, will fail later with clear error
+        DTRACE_PATH.to_string()
+    }
+
     /// Check if dtrace is available on the system.
-    fn check_dtrace_available() -> bool {
-        std::process::Command::new(DTRACE_PATH)
+    fn check_dtrace_available(&self) -> bool {
+        std::process::Command::new(&self.dtrace_path)
             .arg("-V")
             .output()
             .map(|o| o.status.success())
@@ -90,7 +118,7 @@ impl DtraceMonitor {
 
         let script = DTRACE_SCRIPT.replace("__SECRETKEEPER_PID__", &our_pid.to_string());
 
-        let child = Command::new(DTRACE_PATH)
+        let child = Command::new(&self.dtrace_path)
             .args([
                 "-q", // Quiet mode - suppress dtrace preamble
                 "-n", // Inline script
@@ -145,7 +173,7 @@ impl DtraceMonitor {
             .with_pid(pid)
             .with_ppid(ppid)
             .with_uid(uid)
-            .with_euid(uid); // On FreeBSD, we get uid; euid requires more work
+            .with_euid(uid); // On NetBSD, we get uid; euid requires more work
 
         // Normalize file path - expand to ~/ format for user home directories
         let normalized_path = self.normalize_path(path, uid);
@@ -153,11 +181,20 @@ impl DtraceMonitor {
         Some((normalized_path, context))
     }
 
-    /// Get the executable path for a process (async-friendly).
+    /// Get the executable path for a process.
+    /// On NetBSD, try /proc/<pid>/exe first (if procfs mounted),
+    /// then fall back to sysctl.
     async fn get_process_exe(&self, pid: u32) -> Option<PathBuf> {
-        // Use tokio's async Command to avoid blocking the runtime
-        let output = Command::new("/usr/bin/procstat")
-            .args(["-b", &pid.to_string()])
+        // Try /proc/<pid>/exe symlink first (requires procfs mounted)
+        let proc_exe = PathBuf::from(format!("/proc/{}/exe", pid));
+        if let Ok(exe_path) = tokio::fs::read_link(&proc_exe).await {
+            return Some(exe_path);
+        }
+
+        // Fall back to sysctl kern.proc.pathname.<pid>
+        // This is available without procfs
+        let output = Command::new("/sbin/sysctl")
+            .args(["-n", &format!("kern.proc.pathname.{}", pid)])
             .output()
             .await
             .ok()?;
@@ -166,31 +203,13 @@ impl DtraceMonitor {
             return None;
         }
 
-        let output_str = String::from_utf8_lossy(&output.stdout);
-        // Skip header line, parse second line
-        let line = output_str.lines().nth(1)?;
-
-        // Format: PID COMM PATH (but PATH may contain spaces)
-        // procstat -b output: "  PID  COMM             PATH"
-        // We need to find the path which starts after the COMM field
-        let trimmed = line.trim();
-        let mut parts = trimmed.splitn(3, char::is_whitespace);
-        let _pid = parts.next()?; // Skip PID
-                                  // Skip whitespace and COMM - find the path (last substantial field)
-                                  // Actually procstat format is: PID<whitespace>COMM<whitespace>PATH
-                                  // The PATH is the rest after COMM
-        let rest: String = parts.collect::<Vec<_>>().join(" ");
-        let rest = rest.trim_start();
-
-        // COMM is the first word, PATH is everything after
-        if let Some(space_idx) = rest.find(char::is_whitespace) {
-            let path = rest[space_idx..].trim();
-            if !path.is_empty() {
-                return Some(PathBuf::from(path));
-            }
+        let path_str = String::from_utf8_lossy(&output.stdout);
+        let path = path_str.trim();
+        if path.is_empty() || path == "(unknown)" {
+            return None;
         }
 
-        None
+        Some(PathBuf::from(path))
     }
 
     /// Normalize a file path, converting /home/user/... to ~/...
@@ -216,14 +235,16 @@ impl DtraceMonitor {
 #[async_trait::async_trait]
 impl super::Monitor for DtraceMonitor {
     async fn start(&mut self) -> Result<()> {
-        tracing::info!("Starting DTrace monitor");
+        tracing::info!("Starting DTrace monitor on NetBSD");
+        tracing::info!("Using dtrace at: {}", self.dtrace_path);
         tracing::info!("Note: DTrace requires root privileges");
 
         // Check if dtrace is available
-        if !Self::check_dtrace_available() {
-            return Err(Error::monitor(
-                "dtrace not found or not executable. Ensure you're running as root on FreeBSD.",
-            ));
+        if !self.check_dtrace_available() {
+            return Err(Error::monitor(format!(
+                "dtrace not found at {} or not executable. Ensure you're running as root on NetBSD with DTrace enabled (MKDTRACE=yes).",
+                self.dtrace_path
+            )));
         }
 
         // DTrace can only observe, not block - set mode to best-effort
@@ -346,7 +367,7 @@ impl super::Monitor for DtraceMonitor {
                                 || snapshot.violations > 0
                             {
                                 tracing::info!(
-                                    "Status [dtrace]: {} events, {} protected file checks, {} allowed, {} violations, {} rate-limited",
+                                    "Status [dtrace/netbsd]: {} events, {} protected file checks, {} allowed, {} violations, {} rate-limited",
                                     snapshot.events_received,
                                     snapshot.protected_checks,
                                     snapshot.allowed,
@@ -355,7 +376,7 @@ impl super::Monitor for DtraceMonitor {
                                 );
                             } else {
                                 tracing::debug!(
-                                    "Status [dtrace]: idle (no file access events in last minute)"
+                                    "Status [dtrace/netbsd]: idle (no file access events in last minute)"
                                 );
                             }
                         }

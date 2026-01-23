@@ -74,7 +74,17 @@ pub fn default_config_path() -> std::path::PathBuf {
         std::path::PathBuf::from("/usr/local/etc/secretkeeper/config.toml")
     }
 
-    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "freebsd")))]
+    #[cfg(target_os = "netbsd")]
+    {
+        std::path::PathBuf::from("/usr/pkg/etc/secretkeeper/config.toml")
+    }
+
+    #[cfg(not(any(
+        target_os = "macos",
+        target_os = "linux",
+        target_os = "freebsd",
+        target_os = "netbsd"
+    )))]
     {
         std::path::PathBuf::from("config.toml")
     }
@@ -97,7 +107,17 @@ pub fn default_socket_path() -> std::path::PathBuf {
         std::path::PathBuf::from("/var/run/secretkeeper.sock")
     }
 
-    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "freebsd")))]
+    #[cfg(target_os = "netbsd")]
+    {
+        std::path::PathBuf::from("/var/run/secretkeeper.sock")
+    }
+
+    #[cfg(not(any(
+        target_os = "macos",
+        target_os = "linux",
+        target_os = "freebsd",
+        target_os = "netbsd"
+    )))]
     {
         std::path::PathBuf::from("secretkeeper.sock")
     }
@@ -120,7 +140,17 @@ pub fn default_database_path() -> std::path::PathBuf {
         std::path::PathBuf::from("/var/db/secretkeeper/violations.db")
     }
 
-    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "freebsd")))]
+    #[cfg(target_os = "netbsd")]
+    {
+        std::path::PathBuf::from("/var/db/secretkeeper/violations.db")
+    }
+
+    #[cfg(not(any(
+        target_os = "macos",
+        target_os = "linux",
+        target_os = "freebsd",
+        target_os = "netbsd"
+    )))]
     {
         std::path::PathBuf::from("violations.db")
     }

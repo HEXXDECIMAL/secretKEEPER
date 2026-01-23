@@ -305,6 +305,9 @@ struct MenuBarView: View {
     // MARK: - Helpers
 
     private func formatUptime(_ seconds: Int) -> String {
+        // Guard against negative or corrupted values
+        guard seconds >= 0 else { return "0m" }
+
         let hours = seconds / 3600
         let minutes = (seconds % 3600) / 60
 

@@ -5,6 +5,22 @@
 # ============================================================================
 # GLOBAL EXCLUSIONS - macOS system processes
 # ============================================================================
+
+# ------- Code Signing Exclusions (Recommended for macOS) -------
+# macOS uses code signing as the primary trust mechanism.
+# Use team_id for third-party apps, platform_binary for Apple binaries.
+
+# ------- Homebrew Package Exclusions (Optional) -------
+# Trust all homebrew/core tap packages
+# [[global_exclusions]]
+# package_vendor = "homebrew/core"
+
+# Trust specific Homebrew packages
+# [[global_exclusions]]
+# package = "git"
+# package_vendor = "homebrew/core"
+
+# ------- System exclusions -------
 [[global_exclusions]]
 path = "/System/*"
 ppid = 1

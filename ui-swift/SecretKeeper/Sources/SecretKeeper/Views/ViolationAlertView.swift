@@ -47,21 +47,29 @@ struct ViolationAlertView: View {
         // Mark action as taken immediately (synchronously)
         actionTaken = true
 
+        // CRITICAL: Disconnect the SwiftUI view hierarchy BEFORE closing.
+        // This forces SwiftUI to tear down immediately, ensuring no dangling
+        // observers remain subscribed to @Published properties when we later
+        // modify state. Without this, the partially-deallocated view hierarchy
+        // can receive Combine notifications during Core Animation cleanup,
+        // causing NSConcretePointerArray use-after-free crashes.
+        window?.contentView = nil
+
         // Use orderOut to close WITHOUT animation - this prevents use-after-free
         // crashes in _NSWindowTransformAnimation when SwiftUI tears down the view
         // hierarchy while an animation block still holds references.
         window?.orderOut(nil)
 
         // Wait for window/view cleanup before modifying state.
-        // This delay lets SwiftUI fully tear down the view hierarchy
-        // before we trigger any @Published changes that would cause
-        // observer notifications.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak appState] in
+        // This delay lets Core Animation and SwiftUI fully tear down the view
+        // hierarchy before we trigger any @Published changes. 150ms is enough
+        // for complex view hierarchies while not being noticeable to users.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
             // Now safe to perform action (IPC call + state modification)
             action(violationId)
 
             // Clear pending violation after additional delay
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak appState] in
                 appState?.clearPendingViolation(violationId)
             }
         }
@@ -76,8 +84,9 @@ struct ViolationAlertView: View {
         // Capture violation ID before any async work
         let violationId = violation.id
 
-        // Defer the state modification to avoid crashes during view deallocation
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak appState] in
+        // Defer the state modification to avoid crashes during view deallocation.
+        // Use 150ms delay to ensure SwiftUI view hierarchy is fully torn down.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak appState] in
             appState?.recordAction(.dismissed, forViolationId: violationId)
         }
     }
@@ -274,9 +283,12 @@ struct ViolationAlertView: View {
                         }
 
                         Button("Close") {
+                            // Disconnect SwiftUI before closing to prevent observer crashes
                             if let window = NSApp.keyWindow {
+                                window.contentView = nil
                                 window.orderOut(nil)
                             } else if let window = NSApp.windows.first(where: { $0.title.contains("Violation") }) {
+                                window.contentView = nil
                                 window.orderOut(nil)
                             }
                         }
@@ -297,11 +309,12 @@ struct ViolationAlertView: View {
                         }
 
                         Button("Close") {
-                            // Use orderOut to close without animation - prevents use-after-free
-                            // in _NSWindowTransformAnimation when SwiftUI tears down the view.
+                            // Disconnect SwiftUI before closing to prevent observer crashes
                             if let window = NSApp.keyWindow {
+                                window.contentView = nil
                                 window.orderOut(nil)
                             } else if let window = NSApp.windows.first(where: { $0.title.contains("Violation") }) {
+                                window.contentView = nil
                                 window.orderOut(nil)
                             }
                         }

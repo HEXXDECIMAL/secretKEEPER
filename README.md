@@ -13,6 +13,7 @@ Protect users from supply-chain attacks and malicious software that attempt to s
 | macOS | Endpoint Security Framework | True blocking | 13.0+ |
 | Linux | fanotify (FAN_OPEN_PERM) | True blocking | Kernel 5.1+ |
 | FreeBSD | DTrace | Best-effort | 10+ |
+| NetBSD | DTrace | Best-effort | 8+ |
 
 ## Architecture
 
@@ -73,6 +74,13 @@ make build-release
 sudo make install-freebsd
 ```
 
+### NetBSD
+
+```bash
+make build-release
+sudo make install-netbsd
+```
+
 ## Requirements
 
 ### macOS
@@ -88,6 +96,11 @@ sudo make install-freebsd
 ### FreeBSD
 - FreeBSD 10+
 - DTrace enabled
+
+### NetBSD
+- NetBSD 8+
+- DTrace enabled (MKDTRACE=yes in build)
+- Root privileges
 
 ## Documentation
 
@@ -116,6 +129,10 @@ SecretKeeper uses the fanotify API with `FAN_OPEN_PERM` permission events for tr
 ### FreeBSD (DTrace)
 
 SecretKeeper uses DTrace to monitor file access system calls. While it cannot block access before it occurs, it can detect violations and suspend offending processes.
+
+### NetBSD (DTrace)
+
+Like FreeBSD, SecretKeeper uses DTrace on NetBSD to monitor `open` and `openat` system calls. NetBSD has included DTrace support since version 8. Process executable lookup uses `/proc/<pid>/exe` (when procfs is mounted) or `sysctl kern.proc.pathname`.
 
 ## Building
 

@@ -5,6 +5,23 @@
 # ============================================================================
 # GLOBAL EXCLUSIONS
 # ============================================================================
+
+# ------- Package-based exclusions (RPM/Debian) -------
+# Trust all verified Red Hat signed packages (RHEL, CentOS, Rocky, Alma)
+# [[global_exclusions]]
+# package_vendor = "Red Hat*"
+# package_verified = true
+
+# Trust all Debian maintainer packages
+# [[global_exclusions]]
+# package_vendor = "*@debian.org"
+
+# Trust specific packages by name pattern
+# [[global_exclusions]]
+# package = "openssh-*"
+# package_vendor = "Red Hat*"
+
+# ------- Process-based exclusions -------
 [[global_exclusions]]
 base = "syncthing"
 path = "/usr/bin/syncthing"

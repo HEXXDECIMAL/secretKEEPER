@@ -49,6 +49,24 @@ pub struct AllowRule {
     /// Whether this is an Apple platform binary.
     #[serde(default)]
     pub platform_binary: Option<bool>,
+
+    // =========================================================================
+    // Package-based identification (Linux, FreeBSD, Homebrew)
+    // =========================================================================
+    /// Package name pattern (e.g., "openssh-*", "coreutils"). Supports glob patterns.
+    /// Analogous to `signing_id` for macOS code signing.
+    #[serde(default)]
+    pub package: Option<String>,
+
+    /// Package vendor/maintainer pattern (e.g., "Red Hat*", "homebrew/core").
+    /// Analogous to `team_id` for macOS code signing.
+    #[serde(default)]
+    pub package_vendor: Option<String>,
+
+    /// Require cryptographic verification of the package (RPM GPG, FreeBSD fingerprint).
+    /// Analogous to `platform_binary` for macOS.
+    #[serde(default)]
+    pub package_verified: Option<bool>,
 }
 
 #[allow(dead_code)]
@@ -68,6 +86,9 @@ impl AllowRule {
             && self.uid.is_none()
             && self.euid.is_none()
             && self.platform_binary.is_none()
+            && self.package.is_none()
+            && self.package_vendor.is_none()
+            && self.package_verified.is_none()
     }
 
     /// Validate the rule. Returns an error message if invalid.
@@ -332,6 +353,106 @@ impl AllowRule {
                         tracing::debug!(
                             "Rule failed: expected platform_binary {} but none provided",
                             expected_platform
+                        );
+                    }
+                    return false;
+                }
+            }
+        }
+
+        // Check package name pattern
+        if let Some(ref expected_package) = self.package {
+            match &context.package {
+                Some(pkg_info) => {
+                    if !matches_pattern(expected_package, &pkg_info.name) {
+                        if debug {
+                            tracing::debug!(
+                                "Rule failed: package '{}' doesn't match pattern '{}'",
+                                pkg_info.name,
+                                expected_package
+                            );
+                        }
+                        return false;
+                    }
+                }
+                None => {
+                    if debug {
+                        tracing::debug!(
+                            "Rule failed: expected package '{}' but process has no package info",
+                            expected_package
+                        );
+                    }
+                    return false;
+                }
+            }
+        }
+
+        // Check package vendor pattern
+        if let Some(ref expected_vendor) = self.package_vendor {
+            match &context.package {
+                Some(pkg_info) => match &pkg_info.vendor {
+                    Some(actual_vendor) => {
+                        if !matches_pattern(expected_vendor, actual_vendor) {
+                            if debug {
+                                tracing::debug!(
+                                    "Rule failed: package_vendor '{}' doesn't match pattern '{}'",
+                                    actual_vendor,
+                                    expected_vendor
+                                );
+                            }
+                            return false;
+                        }
+                    }
+                    None => {
+                        if debug {
+                            tracing::debug!(
+                                    "Rule failed: expected package_vendor '{}' but package has no vendor",
+                                    expected_vendor
+                                );
+                        }
+                        return false;
+                    }
+                },
+                None => {
+                    if debug {
+                        tracing::debug!(
+                            "Rule failed: expected package_vendor '{}' but process has no package info",
+                            expected_vendor
+                        );
+                    }
+                    return false;
+                }
+            }
+        }
+
+        // Check package verification status.
+        // SECURITY: Verification is REQUIRED by default when using package-based rules.
+        // If someone specifies `package` or `package_vendor`, we verify the package
+        // hasn't been tampered with. Set `package_verified = false` to explicitly
+        // skip verification (not recommended).
+        // If only `package_verified = true` is set (without package/package_vendor),
+        // it acts as a filter: "allow any verified package".
+        let uses_package_rules = self.package.is_some() || self.package_vendor.is_some();
+        let require_verified = self.package_verified.unwrap_or(uses_package_rules);
+
+        if require_verified {
+            match &context.package {
+                Some(pkg_info) => {
+                    if !pkg_info.is_verified() {
+                        if debug {
+                            tracing::debug!(
+                                "Rule failed: package verification required but package '{}' is {:?}",
+                                pkg_info.name,
+                                pkg_info.verified
+                            );
+                        }
+                        return false;
+                    }
+                }
+                None => {
+                    if debug {
+                        tracing::debug!(
+                            "Rule failed: package verification required but process has no package info"
                         );
                     }
                     return false;
@@ -979,6 +1100,9 @@ mod tests {
             uid: Some(0),
             euid: Some((0, 0)),
             platform_binary: Some(false),
+            package: None,
+            package_vendor: None,
+            package_verified: None,
         };
 
         // All conditions match
@@ -1016,5 +1140,269 @@ mod tests {
         // No signing_id in context
         let ctx = ProcessContext::new(PathBuf::from("/usr/bin/test"));
         assert!(!rule.matches(&ctx));
+    }
+
+    // =========================================================================
+    // Package-based matching tests
+    // =========================================================================
+
+    use crate::process::{PackageInfo, PackageManager, VerificationStatus};
+
+    fn make_package_info(
+        name: &str,
+        vendor: Option<&str>,
+        verified: VerificationStatus,
+    ) -> PackageInfo {
+        PackageInfo {
+            manager: PackageManager::Rpm,
+            name: name.to_string(),
+            version: Some("1.0.0".to_string()),
+            vendor: vendor.map(String::from),
+            verified,
+        }
+    }
+
+    #[test]
+    fn test_rule_matching_package() {
+        let rule = AllowRule {
+            package: Some("openssh-*".to_string()),
+            ..Default::default()
+        };
+
+        // Package matches pattern AND is verified (verification is default)
+        let ctx =
+            ProcessContext::new(PathBuf::from("/usr/bin/ssh")).with_package(make_package_info(
+                "openssh-client",
+                Some("Debian"),
+                VerificationStatus::Verified,
+            ));
+        assert!(rule.matches(&ctx));
+
+        // Package matches but NOT verified - should FAIL (verification is default)
+        let ctx_unverified =
+            ProcessContext::new(PathBuf::from("/usr/bin/ssh")).with_package(make_package_info(
+                "openssh-client",
+                Some("Debian"),
+                VerificationStatus::NotChecked,
+            ));
+        assert!(!rule.matches(&ctx_unverified));
+
+        // Package doesn't match pattern
+        let ctx2 = ProcessContext::new(PathBuf::from("/usr/bin/curl")).with_package(
+            make_package_info("curl", Some("Debian"), VerificationStatus::Verified),
+        );
+        assert!(!rule.matches(&ctx2));
+
+        // No package info
+        let ctx3 = ProcessContext::new(PathBuf::from("/usr/bin/ssh"));
+        assert!(!rule.matches(&ctx3));
+    }
+
+    #[test]
+    fn test_rule_matching_package_explicit_no_verify() {
+        // Explicitly disable verification (not recommended but supported)
+        let rule = AllowRule {
+            package: Some("openssh-*".to_string()),
+            package_verified: Some(false),
+            ..Default::default()
+        };
+
+        // Package matches pattern, not verified, but verification disabled
+        let ctx =
+            ProcessContext::new(PathBuf::from("/usr/bin/ssh")).with_package(make_package_info(
+                "openssh-client",
+                Some("Debian"),
+                VerificationStatus::NotChecked,
+            ));
+        assert!(rule.matches(&ctx));
+    }
+
+    #[test]
+    fn test_rule_matching_package_vendor() {
+        let rule = AllowRule {
+            package_vendor: Some("Red Hat*".to_string()),
+            ..Default::default()
+        };
+
+        // Vendor matches AND verified (verification is default)
+        let ctx =
+            ProcessContext::new(PathBuf::from("/usr/bin/ssh")).with_package(make_package_info(
+                "openssh",
+                Some("Red Hat, Inc."),
+                VerificationStatus::Verified,
+            ));
+        assert!(rule.matches(&ctx));
+
+        // Vendor matches but NOT verified - should FAIL
+        let ctx_unverified =
+            ProcessContext::new(PathBuf::from("/usr/bin/ssh")).with_package(make_package_info(
+                "openssh",
+                Some("Red Hat, Inc."),
+                VerificationStatus::NotChecked,
+            ));
+        assert!(!rule.matches(&ctx_unverified));
+
+        // Vendor doesn't match
+        let ctx2 =
+            ProcessContext::new(PathBuf::from("/usr/bin/ssh")).with_package(make_package_info(
+                "openssh",
+                Some("Fedora Project"),
+                VerificationStatus::Verified,
+            ));
+        assert!(!rule.matches(&ctx2));
+
+        // No vendor in package
+        let ctx3 = ProcessContext::new(PathBuf::from("/usr/bin/ssh")).with_package(
+            make_package_info("openssh", None, VerificationStatus::Verified),
+        );
+        assert!(!rule.matches(&ctx3));
+
+        // No package info
+        let ctx4 = ProcessContext::new(PathBuf::from("/usr/bin/ssh"));
+        assert!(!rule.matches(&ctx4));
+    }
+
+    #[test]
+    fn test_rule_matching_package_verified() {
+        let rule = AllowRule {
+            package_verified: Some(true),
+            ..Default::default()
+        };
+
+        // Package is cryptographically verified
+        let ctx = ProcessContext::new(PathBuf::from("/usr/bin/ssh")).with_package(
+            make_package_info("openssh", Some("Red Hat"), VerificationStatus::Verified),
+        );
+        assert!(rule.matches(&ctx));
+
+        // Package is checksum verified (weaker, but still verified)
+        let ctx2 = ProcessContext::new(PathBuf::from("/usr/bin/ssh")).with_package(
+            make_package_info("openssh", Some("Debian"), VerificationStatus::ChecksumOnly),
+        );
+        assert!(rule.matches(&ctx2));
+
+        // Package verification not checked
+        let ctx3 = ProcessContext::new(PathBuf::from("/usr/bin/ssh")).with_package(
+            make_package_info("openssh", Some("Red Hat"), VerificationStatus::NotChecked),
+        );
+        assert!(!rule.matches(&ctx3));
+
+        // Package verification failed
+        let ctx4 = ProcessContext::new(PathBuf::from("/usr/bin/ssh")).with_package(
+            make_package_info("openssh", Some("Red Hat"), VerificationStatus::Failed),
+        );
+        assert!(!rule.matches(&ctx4));
+
+        // No package info
+        let ctx5 = ProcessContext::new(PathBuf::from("/usr/bin/ssh"));
+        assert!(!rule.matches(&ctx5));
+    }
+
+    #[test]
+    fn test_rule_matching_package_combined() {
+        // Real-world example: Trust all verified Red Hat packages
+        let rule = AllowRule {
+            package_vendor: Some("Red Hat*".to_string()),
+            package_verified: Some(true),
+            ..Default::default()
+        };
+
+        // Matches: Red Hat vendor + verified
+        let ctx =
+            ProcessContext::new(PathBuf::from("/usr/bin/ssh")).with_package(make_package_info(
+                "openssh",
+                Some("Red Hat, Inc."),
+                VerificationStatus::Verified,
+            ));
+        assert!(rule.matches(&ctx));
+
+        // Fails: Red Hat vendor but not verified
+        let ctx2 =
+            ProcessContext::new(PathBuf::from("/usr/bin/ssh")).with_package(make_package_info(
+                "openssh",
+                Some("Red Hat, Inc."),
+                VerificationStatus::NotChecked,
+            ));
+        assert!(!rule.matches(&ctx2));
+
+        // Fails: Verified but wrong vendor
+        let ctx3 =
+            ProcessContext::new(PathBuf::from("/usr/bin/ssh")).with_package(make_package_info(
+                "openssh",
+                Some("Fedora Project"),
+                VerificationStatus::Verified,
+            ));
+        assert!(!rule.matches(&ctx3));
+    }
+
+    #[test]
+    fn test_rule_matching_homebrew() {
+        // Trust homebrew/core tap - explicitly disable verification since
+        // Homebrew doesn't have per-package signatures (trusts tap name only)
+        let rule = AllowRule {
+            package_vendor: Some("homebrew/core".to_string()),
+            package_verified: Some(false), // Homebrew uses tap trust, not signatures
+            ..Default::default()
+        };
+
+        let mut pkg =
+            make_package_info("git", Some("homebrew/core"), VerificationStatus::NotChecked);
+        pkg.manager = PackageManager::Homebrew;
+
+        let ctx = ProcessContext::new(PathBuf::from("/opt/homebrew/bin/git")).with_package(pkg);
+        assert!(rule.matches(&ctx));
+
+        // Third-party tap
+        let mut pkg2 = make_package_info(
+            "custom-tool",
+            Some("user/custom-tap"),
+            VerificationStatus::NotChecked,
+        );
+        pkg2.manager = PackageManager::Homebrew;
+
+        let ctx2 =
+            ProcessContext::new(PathBuf::from("/opt/homebrew/bin/custom-tool")).with_package(pkg2);
+        assert!(!rule.matches(&ctx2));
+    }
+
+    #[test]
+    fn test_package_toml_deserialization() {
+        let toml_str = r#"
+            package = "openssh-*"
+            package_vendor = "Red Hat*"
+            package_verified = true
+        "#;
+        let rule: AllowRule = toml::from_str(toml_str).unwrap();
+        assert_eq!(rule.package, Some("openssh-*".to_string()));
+        assert_eq!(rule.package_vendor, Some("Red Hat*".to_string()));
+        assert_eq!(rule.package_verified, Some(true));
+    }
+
+    #[test]
+    fn test_is_empty_with_package_fields() {
+        // Empty rule
+        let empty = AllowRule::default();
+        assert!(empty.is_empty());
+
+        // Rule with only package field
+        let with_package = AllowRule {
+            package: Some("openssh-*".to_string()),
+            ..Default::default()
+        };
+        assert!(!with_package.is_empty());
+
+        // Rule with only package_vendor
+        let with_vendor = AllowRule {
+            package_vendor: Some("Red Hat*".to_string()),
+            ..Default::default()
+        };
+        assert!(!with_vendor.is_empty());
+
+        // Rule with only package_verified
+        let with_verified = AllowRule {
+            package_verified: Some(true),
+            ..Default::default()
+        };
+        assert!(!with_verified.is_empty());
     }
 }

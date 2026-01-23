@@ -47,6 +47,15 @@ class IPCClient: NSObject {
         self.socketPath = socketPath
     }
 
+    deinit {
+        // Clean up stream delegates to prevent callbacks to deallocated object.
+        // Streams hold strong references to delegates, so we must nil them out.
+        inputStream?.delegate = nil
+        outputStream?.delegate = nil
+        inputStream?.close()
+        outputStream?.close()
+    }
+
     /// Connect to the agent socket.
     func connect() {
         queue.async { [weak self] in
@@ -156,6 +165,9 @@ class IPCClient: NSObject {
     }
 
     private func doDisconnect() {
+        // Remove delegates before closing to prevent callbacks during teardown
+        inputStream?.delegate = nil
+        outputStream?.delegate = nil
         inputStream?.close()
         outputStream?.close()
         inputStream = nil

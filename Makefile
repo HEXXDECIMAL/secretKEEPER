@@ -26,6 +26,7 @@ INSTALL_DIR := /usr/local/bin
 CONFIG_DIR_MACOS := /Library/Application\ Support/SecretKeeper
 CONFIG_DIR_LINUX := /etc/secretkeeper
 CONFIG_DIR_FREEBSD := /usr/local/etc/secretkeeper
+CONFIG_DIR_NETBSD := /usr/pkg/etc/secretkeeper
 
 all: build
 
@@ -169,6 +170,29 @@ uninstall-freebsd:
 	-sudo rm -rf $(CONFIG_DIR_FREEBSD)
 	@echo "SecretKeeper agent uninstalled"
 
+# NetBSD installation
+install-netbsd: build-release
+	@echo "Installing SecretKeeper agent on NetBSD..."
+	sudo mkdir -p $(CONFIG_DIR_NETBSD)
+	sudo mkdir -p /var/db/secretkeeper
+	sudo cp target/release/secretkeeper-agent $(INSTALL_DIR)/
+	sudo cp agent/config/default.toml $(CONFIG_DIR_NETBSD)/
+	sudo cp agent/config/netbsd.toml $(CONFIG_DIR_NETBSD)/config.toml
+	sudo cp install/netbsd/secretkeeper.rc /etc/rc.d/secretkeeper
+	sudo chmod +x /etc/rc.d/secretkeeper
+	@echo "secretkeeper=YES" | sudo tee -a /etc/rc.conf >/dev/null
+	sudo /etc/rc.d/secretkeeper start
+	@echo "SecretKeeper agent installed and started"
+
+uninstall-netbsd:
+	@echo "Uninstalling SecretKeeper agent from NetBSD..."
+	-sudo /etc/rc.d/secretkeeper stop
+	-sudo sed -i '/^secretkeeper=/d' /etc/rc.conf
+	-sudo rm -f /etc/rc.d/secretkeeper
+	-sudo rm -f $(INSTALL_DIR)/secretkeeper-agent
+	-sudo rm -rf $(CONFIG_DIR_NETBSD)
+	@echo "SecretKeeper agent uninstalled"
+
 # Platform detection
 UNAME := $(shell uname -s)
 
@@ -179,6 +203,8 @@ else ifeq ($(UNAME),Linux)
 	$(MAKE) install-linux
 else ifeq ($(UNAME),FreeBSD)
 	$(MAKE) install-freebsd
+else ifeq ($(UNAME),NetBSD)
+	$(MAKE) install-netbsd
 else
 	@echo "Unsupported platform: $(UNAME)"
 	@exit 1
@@ -191,6 +217,8 @@ else ifeq ($(UNAME),Linux)
 	$(MAKE) uninstall-linux
 else ifeq ($(UNAME),FreeBSD)
 	$(MAKE) uninstall-freebsd
+else ifeq ($(UNAME),NetBSD)
+	$(MAKE) uninstall-netbsd
 else
 	@echo "Unsupported platform: $(UNAME)"
 	@exit 1
@@ -203,6 +231,13 @@ upgrade-freebsd: build-release
 	sudo service secretkeeper start
 	@echo "Upgrade complete"
 
+upgrade-netbsd: build-release
+	@echo "Upgrading SecretKeeper agent on NetBSD..."
+	sudo /etc/rc.d/secretkeeper stop || true
+	sudo cp target/release/secretkeeper-agent $(INSTALL_DIR)/
+	sudo /etc/rc.d/secretkeeper start
+	@echo "Upgrade complete"
+
 upgrade:
 ifeq ($(UNAME),Darwin)
 	$(MAKE) upgrade-macos
@@ -210,6 +245,8 @@ else ifeq ($(UNAME),Linux)
 	$(MAKE) upgrade-linux
 else ifeq ($(UNAME),FreeBSD)
 	$(MAKE) upgrade-freebsd
+else ifeq ($(UNAME),NetBSD)
+	$(MAKE) upgrade-netbsd
 else
 	@echo "Upgrade not yet implemented for $(UNAME)"
 	@exit 1
@@ -220,6 +257,11 @@ restart-freebsd:
 	sudo service secretkeeper restart
 	@echo "Agent restarted"
 
+restart-netbsd:
+	@echo "Restarting SecretKeeper agent on NetBSD..."
+	sudo /etc/rc.d/secretkeeper restart
+	@echo "Agent restarted"
+
 restart:
 ifeq ($(UNAME),Darwin)
 	$(MAKE) restart-macos
@@ -227,6 +269,8 @@ else ifeq ($(UNAME),Linux)
 	sudo systemctl restart secretkeeper
 else ifeq ($(UNAME),FreeBSD)
 	$(MAKE) restart-freebsd
+else ifeq ($(UNAME),NetBSD)
+	$(MAKE) restart-netbsd
 else
 	@echo "Restart not yet implemented for $(UNAME)"
 	@exit 1
@@ -254,6 +298,8 @@ else ifeq ($(UNAME),Linux)
 	@test -f /etc/secretkeeper/config.toml && echo "   ✓ Config file present" || echo "   ✗ Config file not found"
 else ifeq ($(UNAME),FreeBSD)
 	@test -f /usr/local/etc/secretkeeper/config.toml && echo "   ✓ Config file present" || echo "   ✗ Config file not found"
+else ifeq ($(UNAME),NetBSD)
+	@test -f /usr/pkg/etc/secretkeeper/config.toml && echo "   ✓ Config file present" || echo "   ✗ Config file not found"
 endif
 	@echo ""
 	@echo "3. Checking service status..."
@@ -263,6 +309,8 @@ else ifeq ($(UNAME),Linux)
 	@systemctl is-active --quiet secretkeeper && echo "   ✓ Service active" || echo "   ✗ Service not active"
 else ifeq ($(UNAME),FreeBSD)
 	@service secretkeeper status >/dev/null 2>&1 && echo "   ✓ Service running" || echo "   ✗ Service not running"
+else ifeq ($(UNAME),NetBSD)
+	@/etc/rc.d/secretkeeper status >/dev/null 2>&1 && echo "   ✓ Service running" || echo "   ✗ Service not running"
 endif
 	@echo ""
 	@echo "4. Checking socket..."
@@ -271,6 +319,8 @@ ifeq ($(UNAME),Darwin)
 else ifeq ($(UNAME),Linux)
 	@test -S /var/run/secretkeeper.sock && echo "   ✓ Socket available" || echo "   ✗ Socket not found"
 else ifeq ($(UNAME),FreeBSD)
+	@test -S /var/run/secretkeeper.sock && echo "   ✓ Socket available" || echo "   ✗ Socket not found"
+else ifeq ($(UNAME),NetBSD)
 	@test -S /var/run/secretkeeper.sock && echo "   ✓ Socket available" || echo "   ✗ Socket not found"
 endif
 	@echo ""

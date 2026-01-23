@@ -79,6 +79,26 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         AppDelegate.shared = self
     }
 
+    deinit {
+        // Clean up NotificationCenter observers to prevent callbacks to deallocated object
+        NotificationCenter.default.removeObserver(self)
+        // Clean up alert window observers
+        for entry in alertWindows {
+            NotificationCenter.default.removeObserver(entry.observer)
+        }
+        alertWindows.removeAll()
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        // Clean up before termination
+        NotificationCenter.default.removeObserver(self)
+        ipcClient?.disconnect()
+        for entry in alertWindows {
+            NotificationCenter.default.removeObserver(entry.observer)
+        }
+        alertWindows.removeAll()
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Run as accessory app (menu bar only, no dock icon, no auto-shown windows)
         NSApp.setActivationPolicy(.accessory)
@@ -306,17 +326,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         Without FDA, the agent will start but file monitoring will be completely disabled. Your secrets will NOT be protected.
 
         To grant Full Disk Access:
-        1. Click "Open System Settings"
-        2. Click the + button to add an application
-        3. Press Cmd+Shift+G and enter:
-           /Library/PrivilegedHelperTools/
-        4. Select "secretkeeper-agent" and click Open
-        5. Come back here and click "I've Granted Access"
-
-        The path will be copied to your clipboard.
+        1. Click "Grant Access" - this will open System Settings AND reveal the agent binary
+        2. In System Settings, click the + button
+        3. Drag "secretkeeper-agent" from the Finder window into the dialog
+        4. Come back here and click "I've Granted Access"
         """
 
-        alert.addButton(withTitle: "Open System Settings")
+        alert.addButton(withTitle: "Grant Access")
         alert.addButton(withTitle: installed ? "Start Without Protection" : "Install Without Protection")
         alert.addButton(withTitle: "Cancel")
 
@@ -324,16 +340,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         switch response {
         case .alertFirstButtonReturn:
-            // Open System Settings and copy path to clipboard for convenience
-            let pasteboard = NSPasteboard.general
-            pasteboard.clearContents()
-            pasteboard.setString("/Library/PrivilegedHelperTools/secretkeeper-agent", forType: .string)
-            appLogger.info("Copied agent path to clipboard")
+            appLogger.info("Opening FDA settings and revealing agent binary")
 
+            // Open System Settings first
             agentManager.openFullDiskAccessSettings()
 
-            // Show confirmation dialog
-            showFDAConfirmationDialog(installed: installed)
+            // Give System Settings a moment to open, then reveal the binary
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                guard let self = self else { return }
+                self.agentManager.revealAgentInFinder()
+
+                // Show confirmation dialog
+                self.showFDAConfirmationDialog(installed: installed)
+            }
 
         case .alertSecondButtonReturn:
             // Continue anyway without FDA
@@ -353,24 +372,26 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         alert.alertStyle = .informational
         alert.messageText = "Have you granted Full Disk Access?"
         alert.informativeText = """
-        After adding secretkeeper-agent to Full Disk Access:
+        To complete the setup:
+        1. In System Settings, click the + button
+        2. Drag "secretkeeper-agent" from the Finder window
+        3. Toggle the switch ON next to secretkeeper-agent
+        4. Click "I've Granted Access" below
 
-        Click "I've Granted Access" to verify and continue.
-
-        If you haven't done it yet, the path is in your clipboard:
-        /Library/PrivilegedHelperTools/secretkeeper-agent
+        Tip: You can also drag the file directly from Finder to the + button.
         """
 
         alert.addButton(withTitle: "I've Granted Access")
-        alert.addButton(withTitle: "Open System Settings Again")
+        alert.addButton(withTitle: "Show Me Again")
         alert.addButton(withTitle: "Skip (No Protection)")
 
         let response = alert.runModal()
 
         switch response {
         case .alertFirstButtonReturn:
-            // User says they granted FDA - verify by trying to start the agent
-            // We'll check the status after it starts
+            // User says they granted FDA - proceed with install/start
+            // The agent will report degraded_mode if FDA wasn't actually granted,
+            // and we'll show the degraded mode alert at that point
             appLogger.info("User confirmed FDA granted - proceeding with install/start")
             if installed {
                 startAgent()
@@ -379,11 +400,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
 
         case .alertSecondButtonReturn:
-            // Open settings again
+            // Open settings and reveal binary again
+            appLogger.info("Showing FDA settings and agent binary again")
             agentManager.openFullDiskAccessSettings()
-            // Show this dialog again
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-                self?.showFDAConfirmationDialog(installed: installed)
+                guard let self = self else { return }
+                self.agentManager.revealAgentInFinder()
+                // Show this dialog again
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    self.showFDAConfirmationDialog(installed: installed)
+                }
             }
 
         default:
@@ -448,7 +474,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     let successAlert = NSAlert()
                     successAlert.alertStyle = .informational
                     successAlert.messageText = "Installation Complete"
-                    successAlert.informativeText = "The SecretKeeper agent has been installed and is now running.\n\n• Agent installed and running\n• Automatic startup enabled\n• Monitoring active"
+                    successAlert.informativeText = """
+                    The SecretKeeper agent has been installed and is now running.
+
+                    • Agent installed at /Library/PrivilegedHelperTools/
+                    • Automatic startup enabled
+                    • Monitoring active
+
+                    Note: If Full Disk Access wasn't granted earlier, the agent will run in degraded mode and you'll be prompted to grant access.
+                    """
                     successAlert.addButton(withTitle: "OK")
                     successAlert.runModal()
 
@@ -731,11 +765,6 @@ extension AppDelegate: IPCClientDelegate {
     private func showDegradedModeAlert() {
         appLogger.warning("Agent is running without FDA - showing prompt")
 
-        // Copy path to clipboard
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.setString("/Library/PrivilegedHelperTools/secretkeeper-agent", forType: .string)
-
         let alert = NSAlert()
         alert.alertStyle = .critical
         alert.messageText = "Protection Disabled"
@@ -743,26 +772,28 @@ extension AppDelegate: IPCClientDelegate {
         SecretKeeper cannot protect your files without Full Disk Access.
 
         To enable protection:
-        1. Click "Open System Settings"
-        2. Click + then press Cmd+Shift+G
-        3. Paste the path (already copied) and select the agent
-        4. Click "Restart Agent" to apply changes
-
-        Path copied: /Library/PrivilegedHelperTools/secretkeeper-agent
+        1. Click "Grant Access" to open System Settings and reveal the agent
+        2. In System Settings, click the + button
+        3. Drag "secretkeeper-agent" from Finder into the dialog
+        4. Toggle the switch ON, then click "Restart Agent"
         """
 
-        alert.addButton(withTitle: "Open Settings")
-        alert.addButton(withTitle: "Check Again")
+        alert.addButton(withTitle: "Grant Access")
+        alert.addButton(withTitle: "Restart Agent")
         alert.addButton(withTitle: "Later")
 
         let response = alert.runModal()
         switch response {
         case .alertFirstButtonReturn:
-            // Open System Settings
+            // Open System Settings and reveal the agent binary
+            appLogger.info("Opening FDA settings and revealing agent binary")
             agentManager.openFullDiskAccessSettings()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                self?.agentManager.revealAgentInFinder()
+            }
         case .alertSecondButtonReturn:
-            // Check Again - restart agent to see if FDA is now granted
-            appLogger.info("User requested 'Check Again' - restarting agent")
+            // Restart agent to see if FDA is now granted
+            appLogger.info("User requested 'Restart Agent' - restarting")
             restartAgent()
         default:
             break

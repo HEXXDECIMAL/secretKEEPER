@@ -274,7 +274,7 @@ impl FanotifyMonitor {
         };
 
         // Get process info - if process exited, allow access to avoid hang
-        let context = match Self::get_process_info(event.pid) {
+        let mut context = match Self::get_process_info(event.pid) {
             Some(c) => c,
             None => {
                 tracing::debug!(
@@ -289,6 +289,11 @@ impl FanotifyMonitor {
                 };
             }
         };
+
+        // Enrich with package information for package-based rule matching.
+        // Always verify since package rules require verification by default.
+        self.context
+            .enrich_with_verified_package_info(&mut context, true);
 
         // Convert path to ~/ format for matching
         let normalized_path = Self::expand_path_to_tilde(&file_path, context.euid);

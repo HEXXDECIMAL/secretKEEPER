@@ -318,17 +318,35 @@ pub struct GlobalExclusion {
     #[serde(default)]
     pub base: Option<String>,
 
-    /// Team ID.
+    /// Team ID (macOS code signing).
     #[serde(default)]
     pub team_id: Option<String>,
 
-    /// Whether this must be a platform binary.
+    /// Whether this must be a platform binary (macOS).
     #[serde(default)]
     pub platform_binary: Option<bool>,
 
     /// Required parent PID.
     #[serde(default)]
     pub ppid: Option<u32>,
+
+    // =========================================================================
+    // Package-based identification (Linux, FreeBSD, Homebrew)
+    // =========================================================================
+    /// Package name pattern (e.g., "openssh-*", "coreutils"). Supports glob patterns.
+    /// Analogous to `signing_id` for macOS code signing.
+    #[serde(default)]
+    pub package: Option<String>,
+
+    /// Package vendor/maintainer pattern (e.g., "Red Hat*", "homebrew/core").
+    /// Analogous to `team_id` for macOS code signing.
+    #[serde(default)]
+    pub package_vendor: Option<String>,
+
+    /// Require cryptographic verification of the package (RPM GPG, FreeBSD fingerprint).
+    /// Analogous to `platform_binary` for macOS.
+    #[serde(default)]
+    pub package_verified: Option<bool>,
 }
 
 impl From<GlobalExclusion> for AllowRule {
@@ -339,6 +357,9 @@ impl From<GlobalExclusion> for AllowRule {
             team_id: ge.team_id,
             platform_binary: ge.platform_binary,
             ppid: ge.ppid,
+            package: ge.package,
+            package_vendor: ge.package_vendor,
+            package_verified: ge.package_verified,
             ..Default::default()
         }
     }
@@ -729,6 +750,9 @@ comment = "Deployment tool"
             team_id: None,
             platform_binary: None,
             ppid: None,
+            package: None,
+            package_vendor: None,
+            package_verified: None,
         });
         let result = config.validate();
         assert!(result.is_err());
@@ -743,6 +767,9 @@ comment = "Deployment tool"
             team_id: Some("APPLE".to_string()),
             platform_binary: Some(true),
             ppid: Some(1),
+            package: None,
+            package_vendor: None,
+            package_verified: None,
         };
         let rule: AllowRule = exclusion.into();
         assert_eq!(rule.path, Some("/usr/bin/*".to_string()));
@@ -750,6 +777,24 @@ comment = "Deployment tool"
         assert_eq!(rule.team_id, Some("APPLE".to_string()));
         assert_eq!(rule.platform_binary, Some(true));
         assert_eq!(rule.ppid, Some(1));
+    }
+
+    #[test]
+    fn test_global_exclusion_with_package_fields() {
+        let exclusion = GlobalExclusion {
+            path: None,
+            base: None,
+            team_id: None,
+            platform_binary: None,
+            ppid: None,
+            package: Some("openssh-*".to_string()),
+            package_vendor: Some("Red Hat*".to_string()),
+            package_verified: Some(true),
+        };
+        let rule: AllowRule = exclusion.into();
+        assert_eq!(rule.package, Some("openssh-*".to_string()));
+        assert_eq!(rule.package_vendor, Some("Red Hat*".to_string()));
+        assert_eq!(rule.package_verified, Some(true));
     }
 
     #[test]

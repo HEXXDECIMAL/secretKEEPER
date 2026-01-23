@@ -1,0 +1,209 @@
+name: Linux CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  test:
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Run tests
+        run: cargo test --package secretkeeper-agent
+        timeout-minutes: 10
+
+      - name: Run clippy
+        run: cargo clippy --package secretkeeper-agent -- -D warnings
+        timeout-minutes: 5
+
+      - name: Check formatting
+        run: cargo fmt --package secretkeeper-agent -- --check
+
+  privileged-tests:
+    name: Privileged Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Build release
+        run: cargo build --release --package secretkeeper-agent
+        timeout-minutes: 10
+
+      - name: Run privileged tests
+        run: sudo -E cargo test --package secretkeeper-agent -- --ignored
+        timeout-minutes: 5
+
+  build-deb:
+    name: Build Debian Package (${{ matrix.distro }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - distro: debian
+            image: debian:bookworm
+          - distro: ubuntu-22.04
+            image: ubuntu:22.04
+          - distro: ubuntu-24.04
+            image: ubuntu:24.04
+    container:
+      image: ${{ matrix.image }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          apt-get update
+          apt-get install -y curl build-essential pkg-config libssl-dev debhelper devscripts
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
+      - name: Build package
+        run: |
+          source $HOME/.cargo/env
+          ./packaging/build-deb.sh
+        timeout-minutes: 20
+
+      - name: Verify package
+        run: |
+          echo "Verifying package contents..."
+          dpkg -c dist/*.deb
+          echo "Package info:"
+          dpkg -I dist/*.deb
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: secretkeeper-deb-${{ matrix.distro }}
+          path: dist/*.deb
+          if-no-files-found: error
+
+  build-rpm:
+    name: Build RPM Package (${{ matrix.distro }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - distro: fedora-40
+            image: fedora:40
+          - distro: rocky-9
+            image: rockylinux:9
+    container:
+      image: ${{ matrix.image }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies (Fedora)
+        if: startsWith(matrix.distro, 'fedora')
+        run: |
+          dnf install -y rust cargo rpm-build openssl-devel
+
+      - name: Install dependencies (Rocky)
+        if: startsWith(matrix.distro, 'rocky')
+        run: |
+          dnf install -y epel-release
+          dnf install -y rust cargo rpm-build openssl-devel
+
+      - name: Build package
+        run: ./packaging/build-rpm.sh
+        timeout-minutes: 20
+
+      - name: Verify package
+        run: |
+          echo "Verifying package contents..."
+          rpm -qlp dist/*.rpm
+          echo "Package info:"
+          rpm -qip dist/*.rpm
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: secretkeeper-rpm-${{ matrix.distro }}
+          path: dist/*.rpm
+          if-no-files-found: error
+
+  install-test:
+    name: Installation Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: build-deb
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Debian package
+        uses: actions/download-artifact@v4
+        with:
+          name: secretkeeper-deb-ubuntu-22.04
+          path: dist/
+
+      - name: List downloaded files
+        run: ls -la dist/
+
+      - name: Install package
+        run: |
+          sudo apt-get update
+          sudo dpkg -i dist/*.deb || sudo apt-get install -f -y
+
+      - name: Verify installation
+        run: |
+          echo "Checking binary..."
+          test -f /usr/local/bin/secretkeeper-agent
+          echo "Checking config..."
+          test -f /etc/secretkeeper/config.toml
+          echo "Checking service..."
+          systemctl is-enabled secretkeeper || echo "Service not enabled (expected in CI)"
+
+      - name: Test binary runs
+        run: |
+          /usr/local/bin/secretkeeper-agent --help

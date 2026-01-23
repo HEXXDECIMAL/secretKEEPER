@@ -59,6 +59,9 @@ mod linux_fanotify;
 #[cfg(target_os = "freebsd")]
 mod freebsd_dtrace;
 
+#[cfg(target_os = "netbsd")]
+mod netbsd_dtrace;
+
 use crate::config::Config;
 use crate::error::{Error, Result};
 use crate::ipc::ViolationEvent;
@@ -69,6 +72,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{broadcast, Mutex};
+
+// Package cache for Linux/FreeBSD/NetBSD package-based rule matching
+#[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "netbsd"))]
+use crate::process::package_cache::PackageCache;
 
 /// Trait for file access monitors.
 #[async_trait::async_trait]
@@ -95,7 +102,7 @@ pub trait Monitor: Send + Sync {
 /// # Other Platforms
 ///
 /// - **`Fanotify`** (Linux): Uses fanotify with FAN_OPEN_PERM for true blocking.
-/// - **`Dtrace`** (FreeBSD): Uses DTrace for monitoring.
+/// - **`Dtrace`** (FreeBSD/NetBSD): Uses DTrace for monitoring.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mechanism {
     Auto,
@@ -108,6 +115,8 @@ pub enum Mechanism {
     #[cfg(target_os = "linux")]
     Fanotify,
     #[cfg(target_os = "freebsd")]
+    Dtrace,
+    #[cfg(target_os = "netbsd")]
     Dtrace,
 }
 
@@ -124,6 +133,8 @@ impl std::str::FromStr for Mechanism {
             #[cfg(target_os = "linux")]
             "fanotify" => Ok(Mechanism::Fanotify),
             #[cfg(target_os = "freebsd")]
+            "dtrace" => Ok(Mechanism::Dtrace),
+            #[cfg(target_os = "netbsd")]
             "dtrace" => Ok(Mechanism::Dtrace),
             _ => Err(Error::config(format!("Unknown mechanism: {}", s))),
         }
@@ -148,7 +159,17 @@ impl Mechanism {
             Mechanism::Dtrace
         }
 
-        #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "freebsd")))]
+        #[cfg(target_os = "netbsd")]
+        {
+            Mechanism::Dtrace
+        }
+
+        #[cfg(not(any(
+            target_os = "macos",
+            target_os = "linux",
+            target_os = "freebsd",
+            target_os = "netbsd"
+        )))]
         {
             Mechanism::Auto
         }
@@ -259,6 +280,10 @@ pub struct MonitorContext {
     pub pending_events: Arc<tokio::sync::RwLock<Vec<ViolationEvent>>>,
     rate_limiter: RateLimiter,
     pub stats: EventStats,
+    /// Package cache for Linux/FreeBSD/NetBSD package-based rule matching.
+    /// Uses file metadata (inode, mtime, ctime, btime) as cache key.
+    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "netbsd"))]
+    package_cache: PackageCache,
 }
 
 impl MonitorContext {
@@ -283,6 +308,34 @@ impl MonitorContext {
             pending_events,
             rate_limiter: RateLimiter::new(max_events_per_sec),
             stats: EventStats::default(),
+            #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "netbsd"))]
+            package_cache: PackageCache::new(),
+        }
+    }
+
+    /// Enrich a ProcessContext with package information (Linux/FreeBSD/NetBSD only).
+    /// This looks up which system package owns the process executable and
+    /// populates the `package` field for package-based rule matching.
+    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "netbsd"))]
+    pub fn enrich_with_package_info(&self, context: &mut ProcessContext) {
+        if let Some(pkg_info) = self.package_cache.lookup(&context.path) {
+            context.package = Some(pkg_info);
+        }
+    }
+
+    /// Enrich a ProcessContext with package information and verify if required.
+    /// Only performs verification if rules require `package_verified = true`.
+    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "netbsd"))]
+    pub fn enrich_with_verified_package_info(
+        &self,
+        context: &mut ProcessContext,
+        require_verification: bool,
+    ) {
+        if let Some(pkg_info) = self
+            .package_cache
+            .lookup_and_verify(&context.path, require_verification)
+        {
+            context.package = Some(pkg_info);
         }
     }
 
@@ -568,7 +621,20 @@ pub fn create_monitor(
         }
     }
 
-    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "freebsd")))]
+    #[cfg(target_os = "netbsd")]
+    {
+        match mechanism {
+            Mechanism::Dtrace => Ok(Box::new(netbsd_dtrace::DtraceMonitor::new(context))),
+            _ => Err(Error::UnsupportedPlatform(format!("{:?}", mechanism))),
+        }
+    }
+
+    #[cfg(not(any(
+        target_os = "macos",
+        target_os = "linux",
+        target_os = "freebsd",
+        target_os = "netbsd"
+    )))]
     {
         Err(Error::UnsupportedPlatform(std::env::consts::OS.to_string()))
     }

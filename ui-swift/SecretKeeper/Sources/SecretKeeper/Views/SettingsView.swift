@@ -148,15 +148,94 @@ struct ProtectedCategoryRow: View {
         )
     }
 
+    /// Display name for category IDs with proper capitalization
+    private var displayName: String {
+        switch category.id {
+        // SSH
+        case "ssh_keys": return "SSH Keys"
+        case "ssh_host_keys": return "SSH Host Keys"
+        case "root_ssh_keys": return "Root SSH Keys"
+        // Cloud providers
+        case "aws_credentials": return "AWS Credentials"
+        case "aws_session": return "AWS Session Cache"
+        case "gcloud_credentials": return "Google Cloud Credentials"
+        case "gcp_adc": return "Google Cloud Application Default Credentials"
+        case "azure_credentials": return "Azure Credentials"
+        case "digitalocean": return "DigitalOcean Credentials"
+        case "linode": return "Linode CLI Credentials"
+        case "oci": return "Oracle Cloud Credentials"
+        // Containers & orchestration
+        case "kube_config": return "Kubernetes Config"
+        case "docker_config": return "Docker Config"
+        // Security
+        case "gpg_keys": return "GPG Private Keys"
+        case "vault_token": return "HashiCorp Vault Token"
+        case "ansible_vault": return "Ansible Vault Password"
+        case "pass_store": return "Pass Password Store"
+        // Package managers
+        case "npm_token": return "npm Token"
+        case "pypi_token": return "PyPI Token"
+        case "pip_config": return "pip Config"
+        case "gem_credentials": return "RubyGems Credentials"
+        case "cargo_credentials": return "Cargo/crates.io Credentials"
+        // Shell history
+        case "bash_history": return "Bash History"
+        case "zsh_history": return "Zsh History"
+        case "fish_history": return "Fish History"
+        // Git & deployment
+        case "git_credentials": return "Git Credentials"
+        case "vercel": return "Vercel Credentials"
+        case "netlify": return "Netlify Credentials"
+        case "cloudflare": return "Cloudflare Credentials"
+        // Databases
+        case "postgresql": return "PostgreSQL Credentials"
+        case "mysql": return "MySQL Credentials"
+        // Network
+        case "netrc": return "Network Credentials (.netrc)"
+        // Fallback: replace underscores and capitalize each word
+        default:
+            return category.id
+                .replacingOccurrences(of: "_", with: " ")
+                .split(separator: " ")
+                .map { word in
+                    let s = String(word)
+                    // Keep common acronyms uppercase
+                    let acronyms = ["ssh", "aws", "gcp", "gpg", "npm", "api", "cli", "url"]
+                    if acronyms.contains(s.lowercased()) {
+                        return s.uppercased()
+                    }
+                    return s.capitalized
+                }
+                .joined(separator: " ")
+        }
+    }
+
     private var icon: String {
         switch category.id {
-        case "ssh_keys": return "key"
-        case "aws_credentials": return "cloud"
-        case "gcp_credentials": return "cloud"
-        case "kubeconfig": return "server.rack"
+        // SSH
+        case "ssh_keys", "ssh_host_keys", "root_ssh_keys": return "key"
+        // Cloud
+        case "aws_credentials", "aws_session": return "cloud"
+        case "gcloud_credentials", "gcp_adc": return "cloud"
+        case "azure_credentials": return "cloud"
+        case "digitalocean", "linode", "oci": return "cloud"
+        // Containers
+        case "kube_config": return "server.rack"
+        case "docker_config": return "shippingbox"
+        // Security
         case "gpg_keys": return "lock.shield"
-        case "npm_tokens": return "shippingbox"
+        case "vault_token", "ansible_vault", "pass_store": return "lock.fill"
+        // Package managers
+        case "npm_token", "pypi_token", "pip_config", "gem_credentials", "cargo_credentials": return "shippingbox"
+        // Shell history
+        case "bash_history", "zsh_history", "fish_history": return "terminal"
+        // Git & deployment
         case "git_credentials": return "arrow.triangle.branch"
+        case "vercel", "netlify", "cloudflare": return "globe"
+        // Databases
+        case "postgresql", "mysql": return "cylinder"
+        // Network
+        case "netrc": return "network"
         default: return "doc.badge.gearshape"
         }
     }
@@ -167,7 +246,7 @@ struct ProtectedCategoryRow: View {
                 Image(systemName: icon)
                     .frame(width: 20)
                 VStack(alignment: .leading) {
-                    Text(category.id.replacingOccurrences(of: "_", with: " ").capitalized)
+                    Text(displayName)
                     Text(category.patterns.joined(separator: ", "))
                         .font(.caption)
                         .foregroundColor(.secondary)

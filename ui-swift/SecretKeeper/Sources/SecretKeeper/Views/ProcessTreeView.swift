@@ -16,12 +16,17 @@ struct ProcessTreeView: View {
             }
             .padding(.vertical, 8)
         } else {
+            // Snapshot entries to prevent race conditions during rendering
+            let snapshotEntries = entries
+            let entryCount = snapshotEntries.count
             VStack(alignment: .leading, spacing: 0) {
-                ForEach(Array(entries.enumerated()), id: \.offset) { index, entry in
+                // Use PID as stable identifier instead of offset to prevent
+                // crashes when entries change during SwiftUI diffing
+                ForEach(Array(snapshotEntries.enumerated()), id: \.element.pid) { index, entry in
                     ProcessTreeRow(
                         entry: entry,
                         depth: index,
-                        isLast: index == entries.count - 1
+                        isLast: index == entryCount - 1
                     )
                 }
             }

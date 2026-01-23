@@ -3,8 +3,21 @@
 # This file adds FreeBSD-specific global exclusions
 
 # ============================================================================
-# GLOBAL EXCLUSIONS - FreeBSD backup utilities
+# GLOBAL EXCLUSIONS
 # ============================================================================
+
+# ------- Package-based exclusions (FreeBSD pkg) -------
+# Trust all verified official FreeBSD packages
+# [[global_exclusions]]
+# package_vendor = "FreeBSD"
+# package_verified = true
+
+# Trust specific packages by name pattern
+# [[global_exclusions]]
+# package = "openssh-portable*"
+# package_vendor = "FreeBSD"
+
+# ------- Process-based exclusions - FreeBSD backup utilities -------
 [[global_exclusions]]
 base = "tarsnap"
 path = "/usr/local/bin/tarsnap"

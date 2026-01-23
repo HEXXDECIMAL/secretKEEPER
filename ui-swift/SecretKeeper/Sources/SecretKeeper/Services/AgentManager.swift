@@ -96,6 +96,30 @@ class AgentManager {
         NSWorkspace.shared.open(url)
     }
 
+    /// Reveal the agent binary in Finder for easy drag-and-drop to FDA settings.
+    /// Returns true if the binary exists and was revealed, false otherwise.
+    @discardableResult
+    func revealAgentInFinder() -> Bool {
+        let fileManager = FileManager.default
+
+        // First check installed location
+        if fileManager.fileExists(atPath: installBinaryPath) {
+            logger.info("Revealing installed agent binary in Finder: \(installBinaryPath)")
+            NSWorkspace.shared.selectFile(installBinaryPath, inFileViewerRootedAtPath: "")
+            return true
+        }
+
+        // If not installed, try to find it in development locations
+        if let binaryPath = findAgentBinary() {
+            logger.info("Revealing development agent binary in Finder: \(binaryPath)")
+            NSWorkspace.shared.selectFile(binaryPath, inFileViewerRootedAtPath: "")
+            return true
+        }
+
+        logger.warning("Cannot reveal agent in Finder - binary not found")
+        return false
+    }
+
     /// Check if the installed agent binary has Full Disk Access.
     /// This runs `secretkeeper-agent check` with admin privileges and parses the output.
     func checkAgentHasFDA(completion: @escaping (Bool) -> Void) {
@@ -772,19 +796,19 @@ enum AgentManagerError: Error, LocalizedError {
     var errorDescription: String? {
         switch self {
         case .binaryNotFound:
-            return "Could not find the secretkeeper-agent binary. Build the agent first with 'make build-agent'."
+            return "Could not find the secretkeeper-agent binary.\n\nIf building from source, run: make build-agent\n\nIf you downloaded the app, the binary should be embedded. Try re-downloading."
         case .configNotFound:
-            return "Could not find a configuration file."
+            return "Could not find a configuration file.\n\nEnsure the app bundle contains default.toml, or that /Library/Application Support/SecretKeeper/config.toml exists."
         case .userCancelled:
             return "Installation was cancelled."
         case .installFailed(let message):
-            return "Installation failed: \(message)"
+            return "Installation failed: \(message)\n\nTry running the app as an administrator or check Console.app for detailed error messages."
         case .agentDidNotStart:
-            return "The agent was installed but did not start. Check /var/log/secretkeeper.log for details."
+            return "The agent was installed but did not start.\n\nCheck the log file for details:\n  sudo tail -f /var/log/secretkeeper.log\n\nCommon causes:\n• Missing Full Disk Access permission\n• Another instance already running\n• Configuration file errors"
         case .plistNotFound:
-            return "LaunchDaemon plist not found. The agent needs to be installed first."
+            return "LaunchDaemon plist not found at /Library/LaunchDaemons/.\n\nThe agent needs to be installed first. Click 'Install Agent' to set it up."
         case .binaryNotInstalled:
-            return "Agent binary not found at install location. The agent needs to be installed first."
+            return "Agent binary not found at /Library/PrivilegedHelperTools/.\n\nThe agent needs to be installed first. Click 'Install Agent' to set it up."
         }
     }
 }

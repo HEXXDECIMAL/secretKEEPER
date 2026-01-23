@@ -1,5 +1,6 @@
 //! Process context information for system process identification.
 
+use super::package::PackageInfo;
 use std::path::PathBuf;
 
 /// Context information about a process attempting to access protected files.
@@ -27,6 +28,8 @@ pub struct ProcessContext {
     pub platform_binary: Option<bool>,
     /// Current working directory.
     pub cwd: Option<PathBuf>,
+    /// Package information (if binary is from a system package).
+    pub package: Option<PackageInfo>,
 }
 
 #[allow(dead_code)]
@@ -46,6 +49,7 @@ impl ProcessContext {
             euid: None,
             platform_binary: None,
             cwd: None,
+            package: None,
         }
     }
 
@@ -106,6 +110,12 @@ impl ProcessContext {
     #[must_use]
     pub fn with_cwd(mut self, cwd: PathBuf) -> Self {
         self.cwd = Some(cwd);
+        self
+    }
+
+    #[must_use]
+    pub fn with_package(mut self, package: PackageInfo) -> Self {
+        self.package = Some(package);
         self
     }
 
@@ -199,6 +209,7 @@ mod tests {
         assert!(ctx.euid.is_none());
         assert!(ctx.platform_binary.is_none());
         assert!(ctx.cwd.is_none());
+        assert!(ctx.package.is_none());
     }
 
     #[test]

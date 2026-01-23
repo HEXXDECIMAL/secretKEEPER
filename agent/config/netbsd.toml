@@ -1,0 +1,56 @@
+# SecretKeeper NetBSD-Specific Configuration
+# Common rules are in default.toml and loaded automatically
+# This file adds NetBSD-specific global exclusions
+
+# ============================================================================
+# GLOBAL EXCLUSIONS
+# ============================================================================
+
+# ------- Package-based exclusions (pkgsrc) -------
+# Trust all verified packages from pkgsrc
+# [[global_exclusions]]
+# package_vendor = "pkgsrc"
+# package_verified = true
+
+# Trust specific packages by name pattern
+# [[global_exclusions]]
+# package = "openssh*"
+# package_vendor = "pkgsrc"
+
+# ------- Process-based exclusions - NetBSD backup utilities -------
+[[global_exclusions]]
+base = "tarsnap"
+path = "/usr/pkg/bin/tarsnap"
+
+[[global_exclusions]]
+base = "dump"
+path = "/sbin/dump"
+
+[[global_exclusions]]
+base = "restore"
+path = "/sbin/restore"
+
+[[global_exclusions]]
+base = "borg"
+path = "/usr/pkg/bin/borg"
+
+[[global_exclusions]]
+base = "restic"
+path = "/usr/pkg/bin/restic"
+
+[[global_exclusions]]
+base = "syncthing"
+path = "/usr/pkg/bin/syncthing"
+
+# ------- System utilities -------
+[[global_exclusions]]
+base = "sshd"
+path = "/usr/sbin/sshd"
+
+[[global_exclusions]]
+base = "ssh"
+path = "/usr/bin/ssh"
+
+[[global_exclusions]]
+base = "ssh-agent"
+path = "/usr/bin/ssh-agent"
