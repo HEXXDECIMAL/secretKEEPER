@@ -44,7 +44,9 @@ pub struct Args {
     #[arg(short = 'm', long, default_value = "block")]
     pub mode: String,
 
-    /// Monitoring mechanism (auto, eslogger, esf, fanotify, dtrace)
+    /// Monitoring mechanism. On macOS: "esf" (PRODUCTION, requires entitlement) or
+    /// "eslogger" (DEVELOPMENT ONLY, unstable, cannot block). On Linux: "fanotify".
+    /// Use "auto" to select the best available mechanism.
     #[arg(short = 'M', long, default_value = "auto")]
     pub mechanism: String,
 

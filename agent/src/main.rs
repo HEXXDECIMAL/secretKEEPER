@@ -152,7 +152,23 @@ async fn run_agent(args: &Args, config: Config) -> Result<()> {
 
     // Parse mechanism
     let mechanism: Mechanism = args.mechanism.parse()?;
-    tracing::info!("Monitor mechanism: {:?}", mechanism.resolve());
+    let resolved_mechanism = mechanism.resolve();
+    tracing::info!("Monitor mechanism: {:?}", resolved_mechanism);
+
+    // Warn about eslogger limitations
+    #[cfg(target_os = "macos")]
+    if resolved_mechanism == Mechanism::Eslogger {
+        tracing::warn!("╔══════════════════════════════════════════════════════════════════╗");
+        tracing::warn!("║  ⚠️  USING ESLOGGER - DEVELOPMENT/TESTING ONLY                   ║");
+        tracing::warn!("║                                                                  ║");
+        tracing::warn!("║  eslogger CANNOT block file access - it only detects access      ║");
+        tracing::warn!("║  AFTER it has occurred. Data may be exfiltrated before we can    ║");
+        tracing::warn!("║  stop the process.                                               ║");
+        tracing::warn!("║                                                                  ║");
+        tracing::warn!("║  For production use, deploy with ESF mechanism which requires    ║");
+        tracing::warn!("║  a System Extension entitlement from Apple.                      ║");
+        tracing::warn!("╚══════════════════════════════════════════════════════════════════╝");
+    }
 
     // Create monitor
     let mut monitor = create_monitor(mechanism, monitor_context)?;

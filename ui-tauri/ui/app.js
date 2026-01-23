@@ -246,13 +246,19 @@ async function saveException() {
     const comment = document.getElementById('comment').value || null;
 
     const processPath = type === 'process' ? document.getElementById('process-path').value : null;
-    const codeSigner = type === 'signer' ? document.getElementById('code-signer').value : null;
+    // For signer type, use the code-signer input as signing_id (most common case for platform binaries)
+    const signerValue = type === 'signer' ? document.getElementById('code-signer').value : null;
+    const signerType = signerValue ? 'signing_id' : null;
+    const signingId = signerValue;
+    const teamId = null; // Team ID exceptions are typically created via AllowPermanently
     const expiresHours = isPermanent ? null : parseInt(document.getElementById('expires-hours').value);
 
     try {
         await invoke('add_exception', {
             processPath,
-            codeSigner,
+            signerType,
+            teamId,
+            signingId,
             filePattern,
             isGlob,
             expiresHours,
@@ -376,7 +382,8 @@ function renderExceptions() {
                 <div class="exception-pattern">${e.file_pattern}</div>
                 <div class="exception-meta">
                     ${e.process_path ? `<span>Process: ${e.process_path}</span>` : ''}
-                    ${e.code_signer ? `<span>Signer: ${e.code_signer}</span>` : ''}
+                    ${e.team_id ? `<span>Team ID: ${e.team_id}</span>` : ''}
+                    ${e.signing_id ? `<span>Signing ID: ${e.signing_id}</span>` : ''}
                     <span>${e.expires_at ? `Expires: ${formatDate(e.expires_at)}` : 'Permanent'}</span>
                     <span>Added by ${e.added_by}</span>
                 </div>

@@ -134,6 +134,34 @@ impl Storage {
             )?;
         }
 
+        // Migrate legacy code_signer data to new signing_id column
+        // code_signer was used for platform binaries (signing_id type)
+        let has_code_signer: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('exceptions') WHERE name = 'code_signer'",
+                [],
+                |row| row.get::<_, i32>(0),
+            )
+            .map(|count| count > 0)
+            .unwrap_or(false);
+
+        if has_code_signer {
+            let migrated: usize = conn.execute(
+                r#"
+                UPDATE exceptions
+                SET signer_type = 'signing_id', signing_id = code_signer
+                WHERE code_signer IS NOT NULL AND signing_id IS NULL
+                "#,
+                [],
+            )?;
+            if migrated > 0 {
+                tracing::info!(
+                    "Migrated {} exceptions from legacy code_signer to signing_id",
+                    migrated
+                );
+            }
+        }
+
         // Now safe to create indexes on the new columns
         conn.execute_batch(
             r#"

@@ -1,6 +1,26 @@
 .PHONY: all build build-release test lint clean install uninstall upgrade verify check ui-macos ui-macos-debug ui-linux run-ui run-agent dev
+.PHONY: version bump-patch bump-minor bump-major app-bundle app-bundle-signed app-bundle-prod install-app dmg dmg-prod notarize out
 
 CARGO := cargo
+
+#==============================================================================
+# VERSION MANAGEMENT
+#==============================================================================
+VERSION_FILE := $(shell cat VERSION 2>/dev/null)
+GIT_VERSION := $(shell git describe --tags --always 2>/dev/null)
+BUILD_VERSION := $(or $(VERSION_FILE),$(GIT_VERSION),dev)
+GIT_COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+BUILD_DATE := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+
+# Build variant: dev (eslogger) or prod (ESF)
+BUILD_VARIANT ?= dev
+SIGNING_IDENTITY ?= -
+ESF_SIGNING_IDENTITY ?= -
+
+# Output paths
+OUT_DIR := out
+BUNDLE_NAME := SecretKeeper
+BUNDLE_ID := com.codegroove.secretkeeper
 INSTALL_DIR := /usr/local/bin
 CONFIG_DIR_MACOS := /Library/Application\ Support/SecretKeeper
 CONFIG_DIR_LINUX := /etc/secretkeeper
@@ -279,7 +299,7 @@ ui-macos: build-agent
 	<key>CFBundlePackageType</key>\n\
 	<string>APPL</string>\n\
 	<key>CFBundleShortVersionString</key>\n\
-	<string>0.1.0</string>\n\
+	<string>$(BUILD_VERSION)</string>\n\
 	<key>LSMinimumSystemVersion</key>\n\
 	<string>14.0</string>\n\
 	<key>LSUIElement</key>\n\
@@ -323,7 +343,7 @@ ui-macos-debug: build-agent
 	<key>CFBundlePackageType</key>\n\
 	<string>APPL</string>\n\
 	<key>CFBundleShortVersionString</key>\n\
-	<string>0.1.0</string>\n\
+	<string>$(BUILD_VERSION)</string>\n\
 	<key>LSMinimumSystemVersion</key>\n\
 	<string>14.0</string>\n\
 	<key>LSUIElement</key>\n\
@@ -375,3 +395,140 @@ dev: build ui-macos-debug
 	@echo "To run:"
 	@echo "  Terminal 1: make run-agent"
 	@echo "  Terminal 2: make run-ui"
+
+#==============================================================================
+# VERSION MANAGEMENT
+#==============================================================================
+version:
+	@echo "Version: $(BUILD_VERSION)"
+	@echo "Commit:  $(GIT_COMMIT)"
+	@echo "Date:    $(BUILD_DATE)"
+	@echo "Variant: $(BUILD_VARIANT)"
+
+bump-patch bump-minor bump-major:
+	@./scripts/bump-version.sh $(@:bump-%=%)
+
+#==============================================================================
+# APP BUNDLE BUILD (production bundles in out/)
+#==============================================================================
+out:
+	@mkdir -p $(OUT_DIR)
+
+# Build Swift UI (release)
+ui-swift-release:
+	cd ui-swift/SecretKeeper && swift build -c release
+
+# Create unsigned app bundle (uses build-agent to avoid broken Tauri UI)
+app-bundle: out build-agent ui-swift-release
+	@echo "Creating app bundle ($(BUILD_VARIANT))..."
+	@rm -rf "$(OUT_DIR)/$(BUNDLE_NAME).app"
+	@mkdir -p "$(OUT_DIR)/$(BUNDLE_NAME).app/Contents/MacOS"
+	@mkdir -p "$(OUT_DIR)/$(BUNDLE_NAME).app/Contents/Resources/en.lproj"
+	# Copy executables
+	@cp ui-swift/SecretKeeper/.build/release/SecretKeeper \
+		"$(OUT_DIR)/$(BUNDLE_NAME).app/Contents/MacOS/"
+	@cp target/release/secretkeeper-agent \
+		"$(OUT_DIR)/$(BUNDLE_NAME).app/Contents/Resources/"
+	# Copy configs
+	@cp agent/config/default.toml agent/config/macos.toml \
+		"$(OUT_DIR)/$(BUNDLE_NAME).app/Contents/Resources/"
+	# Copy icons
+	@cp media/icons/AppIcon.icns \
+		"$(OUT_DIR)/$(BUNDLE_NAME).app/Contents/Resources/"
+	@cp media/icons/MenuBarIconTemplate.png \
+		media/icons/MenuBarIconTemplate@2x.png \
+		"$(OUT_DIR)/$(BUNDLE_NAME).app/Contents/Resources/"
+	# Generate Info.plist
+	@/usr/libexec/PlistBuddy -c "Clear dict" \
+		"$(OUT_DIR)/$(BUNDLE_NAME).app/Contents/Info.plist" 2>/dev/null || true
+	@/usr/libexec/PlistBuddy \
+		-c "Add :CFBundleExecutable string SecretKeeper" \
+		-c "Add :CFBundleIdentifier string $(BUNDLE_ID).ui" \
+		-c "Add :CFBundleName string SecretKeeper" \
+		-c "Add :CFBundleIconFile string AppIcon" \
+		-c "Add :CFBundlePackageType string APPL" \
+		-c "Add :CFBundleShortVersionString string $(BUILD_VERSION)" \
+		-c "Add :CFBundleVersion string $(BUILD_VERSION)" \
+		-c "Add :LSMinimumSystemVersion string 14.0" \
+		-c "Add :LSUIElement bool true" \
+		-c "Add :NSHighResolutionCapable bool true" \
+		-c "Add :CFBundleDevelopmentRegion string en" \
+		-c "Add :CFBundleGetInfoString string SecretKeeper $(BUILD_VERSION)" \
+		"$(OUT_DIR)/$(BUNDLE_NAME).app/Contents/Info.plist"
+	@echo "Bundle created: $(OUT_DIR)/$(BUNDLE_NAME).app"
+
+# Sign bundle (development - eslogger, ad-hoc or Developer ID)
+app-bundle-signed: app-bundle
+	@echo "Signing app bundle (dev variant)..."
+	@xattr -cr "$(OUT_DIR)/$(BUNDLE_NAME).app"
+	# Sign agent (no ESF entitlements for dev)
+	@codesign --force --sign "$(SIGNING_IDENTITY)" \
+		--entitlements install/macos/SecretKeeperAgent.entitlements \
+		--options runtime \
+		"$(OUT_DIR)/$(BUNDLE_NAME).app/Contents/Resources/secretkeeper-agent"
+	# Sign main app
+	@codesign --force --deep --sign "$(SIGNING_IDENTITY)" \
+		--entitlements install/macos/SecretKeeper.entitlements \
+		--options runtime \
+		"$(OUT_DIR)/$(BUNDLE_NAME).app"
+	@echo "Signed (dev): $(OUT_DIR)/$(BUNDLE_NAME).app"
+	@codesign -dv "$(OUT_DIR)/$(BUNDLE_NAME).app" 2>&1 | head -5
+
+# Sign bundle (production - ESF entitlements, requires Developer ID)
+app-bundle-prod: BUILD_VARIANT=prod
+app-bundle-prod: app-bundle
+	@echo "Signing app bundle (prod variant with ESF)..."
+	@xattr -cr "$(OUT_DIR)/$(BUNDLE_NAME).app"
+	# Sign agent WITH ESF entitlements
+	@codesign --force --sign "$(ESF_SIGNING_IDENTITY)" \
+		--entitlements install/macos/SecretKeeperAgent-ESF.entitlements \
+		--options runtime \
+		"$(OUT_DIR)/$(BUNDLE_NAME).app/Contents/Resources/secretkeeper-agent"
+	# Sign main app
+	@codesign --force --deep --sign "$(ESF_SIGNING_IDENTITY)" \
+		--entitlements install/macos/SecretKeeper.entitlements \
+		--options runtime \
+		"$(OUT_DIR)/$(BUNDLE_NAME).app"
+	@echo "Signed (prod/ESF): $(OUT_DIR)/$(BUNDLE_NAME).app"
+	@codesign -dv "$(OUT_DIR)/$(BUNDLE_NAME).app" 2>&1 | head -5
+
+# Install to /Applications
+install-app: app-bundle-signed
+	@echo "Installing to /Applications..."
+	@rm -rf "/Applications/$(BUNDLE_NAME).app"
+	@cp -R "$(OUT_DIR)/$(BUNDLE_NAME).app" "/Applications/"
+	@echo "Installed: /Applications/$(BUNDLE_NAME).app"
+
+#==============================================================================
+# DISTRIBUTION
+#==============================================================================
+
+# Create DMG
+dmg: app-bundle-signed
+	@echo "Creating DMG..."
+	@rm -f "$(OUT_DIR)/$(BUNDLE_NAME)-$(BUILD_VERSION).dmg"
+	@hdiutil create -volname "$(BUNDLE_NAME)" \
+		-srcfolder "$(OUT_DIR)/$(BUNDLE_NAME).app" \
+		-ov -format UDZO \
+		"$(OUT_DIR)/$(BUNDLE_NAME)-$(BUILD_VERSION).dmg"
+	@echo "Created: $(OUT_DIR)/$(BUNDLE_NAME)-$(BUILD_VERSION).dmg"
+
+# Create production DMG with ESF
+dmg-prod: app-bundle-prod
+	@echo "Creating production DMG..."
+	@rm -f "$(OUT_DIR)/$(BUNDLE_NAME)-$(BUILD_VERSION)-prod.dmg"
+	@hdiutil create -volname "$(BUNDLE_NAME)" \
+		-srcfolder "$(OUT_DIR)/$(BUNDLE_NAME).app" \
+		-ov -format UDZO \
+		"$(OUT_DIR)/$(BUNDLE_NAME)-$(BUILD_VERSION)-prod.dmg"
+	@echo "Created: $(OUT_DIR)/$(BUNDLE_NAME)-$(BUILD_VERSION)-prod.dmg"
+
+# Notarize (requires Apple Developer account and app-specific password)
+# Setup: xcrun notarytool store-credentials "SecretKeeper" --apple-id "..." --team-id "..."
+notarize: dmg-prod
+	@echo "Submitting for notarization..."
+	@xcrun notarytool submit "$(OUT_DIR)/$(BUNDLE_NAME)-$(BUILD_VERSION)-prod.dmg" \
+		--keychain-profile "SecretKeeper" \
+		--wait
+	@xcrun stapler staple "$(OUT_DIR)/$(BUNDLE_NAME)-$(BUILD_VERSION)-prod.dmg"
+	@echo "Notarization complete"

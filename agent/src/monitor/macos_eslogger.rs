@@ -1,4 +1,40 @@
 //! macOS eslogger-based file access monitor.
+//!
+//! # ⚠️ DEVELOPMENT AND TESTING ONLY
+//!
+//! This module uses Apple's `eslogger` command-line tool to monitor file access.
+//! It is **NOT suitable for production use** due to fundamental limitations:
+//!
+//! ## Limitations
+//!
+//! - **Cannot block access**: eslogger provides notification events AFTER file
+//!   access has occurred. By the time we detect an access, the data may already
+//!   be exfiltrated.
+//!
+//! - **Unstable interface**: eslogger is a diagnostic tool, not a stable API.
+//!   Its JSON output format may change between macOS versions.
+//!
+//! - **Process dependency**: Relies on an external process. If eslogger crashes
+//!   or is killed, monitoring stops silently.
+//!
+//! - **Best-effort mitigation**: We attempt to SIGSTOP violating processes, but
+//!   this happens after the file has already been read.
+//!
+//! ## When to Use
+//!
+//! - Local development without Apple Developer ID
+//! - Testing rule configurations
+//! - Demonstrations and proof-of-concept
+//!
+//! ## Production Alternative
+//!
+//! For production deployments, use the `esf` mechanism which provides:
+//! - True pre-access blocking via ES_AUTH_OPEN
+//! - Direct Endpoint Security Framework integration
+//! - Proper error handling and stability
+//!
+//! The `esf` mechanism requires a System Extension entitlement from Apple,
+//! which is only available to registered Apple developers.
 
 use super::MonitorContext;
 use crate::error::{Error, Result};
@@ -69,8 +105,12 @@ impl EsloggerMonitor {
             }
             Ok(None) => {
                 // Still running after 300ms - FDA is granted!
-                let _ = child.kill();
-                let _ = child.wait(); // Reap the zombie
+                if let Err(e) = child.kill() {
+                    tracing::warn!("Failed to kill FDA check process: {}", e);
+                }
+                if let Err(e) = child.wait() {
+                    tracing::warn!("Failed to reap FDA check process: {}", e);
+                }
                 true
             }
             Err(_) => false,
@@ -245,7 +285,9 @@ impl super::Monitor for EsloggerMonitor {
                     }
                 }
                 Err(e) => {
-                    tracing::debug!("Failed to parse eslogger event: {}", e);
+                    // Log at warn level since format changes between macOS versions
+                    // could cause parse failures that should be investigated
+                    tracing::warn!("Failed to parse eslogger event: {}", e);
                 }
             }
         }

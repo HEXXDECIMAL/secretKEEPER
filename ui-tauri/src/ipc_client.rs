@@ -52,13 +52,30 @@ pub struct AgentStatus {
 pub struct Exception {
     pub id: i64,
     pub process_path: Option<String>,
-    pub code_signer: Option<String>,
+    /// Type of signer: "team_id", "signing_id", "adhoc", "unsigned"
+    pub signer_type: Option<String>,
+    pub team_id: Option<String>,
+    pub signing_id: Option<String>,
     pub file_pattern: String,
     pub is_glob: bool,
     pub expires_at: Option<DateTime<Utc>>,
     pub added_by: String,
     pub comment: Option<String>,
     pub created_at: DateTime<Utc>,
+}
+
+/// Parameters for adding a new exception.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct AddExceptionParams {
+    pub process_path: Option<String>,
+    /// Type of signer: "team_id", "signing_id", "adhoc", "unsigned"
+    pub signer_type: Option<String>,
+    pub team_id: Option<String>,
+    pub signing_id: Option<String>,
+    pub file_pattern: String,
+    pub is_glob: bool,
+    pub expires_at: Option<DateTime<Utc>>,
+    pub comment: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -89,14 +106,8 @@ pub enum Request {
         since: Option<DateTime<Utc>>,
     },
     GetExceptions,
-    AddException {
-        process_path: Option<String>,
-        code_signer: Option<String>,
-        file_pattern: String,
-        is_glob: bool,
-        expires_at: Option<DateTime<Utc>>,
-        comment: Option<String>,
-    },
+    #[serde(rename = "add_exception")]
+    AddException(AddExceptionParams),
     RemoveException {
         id: i64,
     },
@@ -270,25 +281,8 @@ impl IpcClient {
         }
     }
 
-    pub async fn add_exception(
-        &mut self,
-        process_path: Option<String>,
-        code_signer: Option<String>,
-        file_pattern: String,
-        is_glob: bool,
-        expires_at: Option<DateTime<Utc>>,
-        comment: Option<String>,
-    ) -> io::Result<()> {
-        let response = self
-            .send_request(&Request::AddException {
-                process_path,
-                code_signer,
-                file_pattern,
-                is_glob,
-                expires_at,
-                comment,
-            })
-            .await?;
+    pub async fn add_exception(&mut self, params: AddExceptionParams) -> io::Result<()> {
+        let response = self.send_request(&Request::AddException(params)).await?;
         match response {
             Response::Ok => Ok(()),
             Response::Error { message } => Err(io::Error::other(message)),

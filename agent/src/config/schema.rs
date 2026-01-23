@@ -190,9 +190,41 @@ fn default_log_level() -> String {
 }
 
 /// Monitoring configuration.
+///
+/// # Mechanism Selection
+///
+/// The `mechanism` field controls how file access is monitored:
+///
+/// ## macOS
+///
+/// - **`esf`** (PRODUCTION): Direct Endpoint Security Framework integration.
+///   Requires a System Extension entitlement from Apple. Provides true pre-access
+///   blocking via ES_AUTH_OPEN events. This is the only mechanism suitable for
+///   production deployments on macOS.
+///
+/// - **`eslogger`** (DEVELOPMENT ONLY): Uses Apple's eslogger CLI tool.
+///   ⚠️ **WARNING: Unstable and NOT suitable for production.**
+///   - Cannot block file access, only detect it after the fact
+///   - Relies on parsing JSON from an external process
+///   - May miss events under load or if eslogger crashes
+///   - Use only for development/testing without entitlements
+///
+/// ## Linux
+///
+/// - **`fanotify`**: Uses fanotify with FAN_OPEN_PERM for true pre-access blocking.
+///
+/// ## FreeBSD
+///
+/// - **`dtrace`**: Uses DTrace for monitoring (notification only, no blocking).
+///
+/// ## Auto Selection
+///
+/// - **`auto`**: Selects the best available mechanism for the platform.
+///   On macOS, defaults to `eslogger` since `esf` requires entitlements.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct MonitoringConfig {
-    /// Monitoring mechanism to use (auto, eslogger, esf, fanotify, dtrace).
+    /// Monitoring mechanism: "auto", "esf" (macOS production), "eslogger" (macOS dev only),
+    /// "fanotify" (Linux), or "dtrace" (FreeBSD).
     #[serde(default = "default_mechanism")]
     pub mechanism: String,
 
@@ -313,24 +345,87 @@ impl From<GlobalExclusion> for AllowRule {
 }
 
 /// Pre-configured exception in config file.
+///
+/// Exceptions allow specific processes to access protected files. You can identify
+/// processes by path, code signature, or both. At least one identifier is required.
+///
+/// # Code Signature Types
+///
+/// macOS apps can be identified by their code signature in three ways:
+///
+/// - **`team_id`**: Apple Developer Team ID (e.g., "EQHXZ8M8AV" for Google).
+///   Use this for third-party apps from identified developers. This is the most
+///   secure option as Team IDs are verified by Apple and cannot be forged.
+///
+/// - **`signing_id`**: Code signing identifier (e.g., "com.apple.bluetoothd").
+///   Use this for Apple platform binaries and system daemons that don't have
+///   a Team ID but are signed by Apple. Format is typically reverse-DNS.
+///
+/// - **`platform_binary`**: Set to `true` to only match Apple platform binaries.
+///   These are binaries shipped with macOS and signed by Apple's platform key.
+///
+/// # Examples
+///
+/// ```toml
+/// # Allow Google Drive to access Keychain (third-party app with Team ID)
+/// [[exceptions]]
+/// team_id = "EQHXZ8M8AV"
+/// file_pattern = "/Library/Keychains/*"
+/// comment = "Google Drive needs Keychain for credentials"
+///
+/// # Allow Bluetooth daemon to access Keychain (Apple system daemon)
+/// [[exceptions]]
+/// signing_id = "com.apple.bluetoothd"
+/// file_pattern = "/Library/Keychains/*"
+/// comment = "Bluetooth needs Keychain for device pairing"
+///
+/// # Allow any Apple platform binary to access SSH keys
+/// [[exceptions]]
+/// platform_binary = true
+/// file_pattern = "~/.ssh/*"
+/// comment = "Trust all Apple system binaries"
+///
+/// # Allow a specific tool by path
+/// [[exceptions]]
+/// process_path = "/usr/local/bin/my-deploy-tool"
+/// file_pattern = "~/.ssh/id_*"
+/// comment = "Deployment automation"
+/// ```
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ExceptionConfig {
-    /// Process path pattern.
+    /// Process path pattern (glob supported, e.g., "/usr/local/bin/*").
+    /// Use this when the process location is known and stable.
     #[serde(default)]
     pub process_path: Option<String>,
 
-    /// Code signer (team_id).
+    /// Apple Developer Team ID (e.g., "EQHXZ8M8AV" for Google, "UBF8T346G9" for Microsoft).
+    /// This is the most secure way to identify third-party applications.
+    /// Find an app's Team ID with: codesign -dv /path/to/App.app 2>&1 | grep TeamIdentifier
     #[serde(default)]
-    pub code_signer: Option<String>,
+    pub team_id: Option<String>,
 
-    /// File pattern this exception applies to.
+    /// Code signing identifier (e.g., "com.apple.bluetoothd", "com.apple.Safari").
+    /// Use this for Apple platform binaries that don't have a Team ID.
+    /// Find with: codesign -dv /path/to/binary 2>&1 | grep Identifier
+    #[serde(default)]
+    pub signing_id: Option<String>,
+
+    /// Only match Apple platform binaries (shipped with macOS, signed by Apple).
+    /// Set to true to trust all Apple system binaries for the given file pattern.
+    #[serde(default)]
+    pub platform_binary: Option<bool>,
+
+    /// File pattern this exception applies to (glob supported).
+    /// Examples: "~/.ssh/*", "/Library/Keychains/*", "~/.aws/credentials"
     pub file_pattern: String,
 
-    /// When this exception expires (ISO 8601 format).
+    /// When this exception expires (ISO 8601 format, e.g., "2024-12-31T23:59:59Z").
+    /// Omit for permanent exceptions.
     #[serde(default)]
     pub expires_at: Option<String>,
 
-    /// Comment explaining this exception.
+    /// Human-readable explanation for why this exception exists.
+    /// Good comments help with security audits.
     #[serde(default)]
     pub comment: Option<String>,
 }
@@ -667,5 +762,121 @@ comment = "Deployment tool"
         assert_eq!(config.enforcement.mode, "block");
         assert!(!config.enforcement.suspend_parent);
         assert_eq!(config.enforcement.history_retention_days, 30);
+    }
+
+    #[test]
+    fn test_exception_with_team_id() {
+        let toml = r#"
+[[exceptions]]
+team_id = "EQHXZ8M8AV"
+file_pattern = "/Library/Keychains/*"
+comment = "Google Drive needs Keychain for credentials"
+"#;
+        let config: Config = toml::from_str(toml).unwrap();
+        assert_eq!(config.exceptions.len(), 1);
+        assert_eq!(config.exceptions[0].team_id, Some("EQHXZ8M8AV".to_string()));
+        assert_eq!(
+            config.exceptions[0].file_pattern,
+            "/Library/Keychains/*".to_string()
+        );
+    }
+
+    #[test]
+    fn test_exception_with_signing_id() {
+        let toml = r#"
+[[exceptions]]
+signing_id = "com.apple.bluetoothd"
+file_pattern = "/Library/Keychains/*"
+comment = "Bluetooth needs Keychain for device pairing"
+"#;
+        let config: Config = toml::from_str(toml).unwrap();
+        assert_eq!(config.exceptions.len(), 1);
+        assert_eq!(
+            config.exceptions[0].signing_id,
+            Some("com.apple.bluetoothd".to_string())
+        );
+    }
+
+    #[test]
+    fn test_exception_with_platform_binary() {
+        let toml = r#"
+[[exceptions]]
+platform_binary = true
+file_pattern = "~/.ssh/*"
+comment = "Trust all Apple system binaries"
+"#;
+        let config: Config = toml::from_str(toml).unwrap();
+        assert_eq!(config.exceptions.len(), 1);
+        assert_eq!(config.exceptions[0].platform_binary, Some(true));
+    }
+
+    #[test]
+    fn test_exception_with_process_path() {
+        let toml = r#"
+[[exceptions]]
+process_path = "/usr/local/bin/my-deploy-tool"
+file_pattern = "~/.ssh/id_*"
+comment = "Deployment automation"
+"#;
+        let config: Config = toml::from_str(toml).unwrap();
+        assert_eq!(config.exceptions.len(), 1);
+        assert_eq!(
+            config.exceptions[0].process_path,
+            Some("/usr/local/bin/my-deploy-tool".to_string())
+        );
+    }
+
+    #[test]
+    fn test_exception_with_expiration() {
+        let toml = r#"
+[[exceptions]]
+team_id = "ABC123"
+file_pattern = "~/.aws/credentials"
+expires_at = "2024-12-31T23:59:59Z"
+comment = "Temporary access for contractor"
+"#;
+        let config: Config = toml::from_str(toml).unwrap();
+        assert_eq!(config.exceptions.len(), 1);
+        assert_eq!(
+            config.exceptions[0].expires_at,
+            Some("2024-12-31T23:59:59Z".to_string())
+        );
+    }
+
+    #[test]
+    fn test_multiple_exceptions() {
+        let toml = r#"
+# Third-party app by Team ID
+[[exceptions]]
+team_id = "EQHXZ8M8AV"
+file_pattern = "/Library/Keychains/*"
+comment = "Google Drive"
+
+# Apple system daemon by signing ID
+[[exceptions]]
+signing_id = "com.apple.bluetoothd"
+file_pattern = "/Library/Keychains/*"
+comment = "Bluetooth"
+
+# All Apple platform binaries
+[[exceptions]]
+platform_binary = true
+file_pattern = "~/.ssh/*"
+comment = "Trust Apple binaries"
+
+# Specific tool by path
+[[exceptions]]
+process_path = "/opt/tools/backup"
+file_pattern = "~/.ssh/*"
+comment = "Backup tool"
+"#;
+        let config: Config = toml::from_str(toml).unwrap();
+        assert_eq!(config.exceptions.len(), 4);
+
+        // Verify each exception type
+        assert!(config.exceptions[0].team_id.is_some());
+        assert!(config.exceptions[1].signing_id.is_some());
+        assert_eq!(config.exceptions[2].platform_binary, Some(true));
+        assert!(config.exceptions[3].process_path.is_some());
     }
 }

@@ -1,19 +1,57 @@
 //! File access monitoring implementations.
 //!
-//! **Security Note on eslogger (macOS):**
-//! The eslogger mechanism uses Apple's Endpoint Security framework via the
-//! `eslogger` command-line tool. This provides notification events AFTER file
-//! access has occurred - it cannot prevent the initial read. When in "block"
-//! mode, we suspend the process via SIGSTOP after detecting the access, but
-//! the file contents may have already been read into the process's memory.
+//! # macOS Monitoring Mechanisms
 //!
-//! For true pre-access blocking on macOS, a direct ESF implementation would
-//! be required (using ES_AUTH_OPEN events). This is a known limitation.
+//! ## ESF (Endpoint Security Framework) - PRODUCTION
 //!
-//! On Linux, fanotify with FAN_OPEN_PERM provides true pre-access blocking.
+//! The `esf` mechanism uses Apple's Endpoint Security framework directly via the
+//! native API. This is the **recommended mechanism for production deployments**.
+//!
+//! **Requirements:**
+//! - System Extension entitlement from Apple (requires Developer ID)
+//! - User approval for System Extension installation
+//! - Full Disk Access (FDA) permission
+//!
+//! **Capabilities:**
+//! - True pre-access blocking via ES_AUTH_OPEN events
+//! - Can prevent file access before any data is read
+//! - Stable, supported API with proper error handling
+//! - Survives process crashes without leaving system in bad state
+//!
+//! ## eslogger - DEVELOPMENT/TESTING ONLY
+//!
+//! The `eslogger` mechanism uses Apple's `eslogger` command-line tool, which
+//! wraps the Endpoint Security framework. This is **only for development and
+//! testing** when you don't have the required entitlements.
+//!
+//! **⚠️ WARNING: eslogger is UNSTABLE and NOT suitable for production:**
+//! - Provides notification events AFTER file access has occurred
+//! - Cannot prevent the initial read - data may already be exfiltrated
+//! - Relies on parsing JSON output from an external process
+//! - May miss events under high load or if eslogger crashes
+//! - No official stability guarantees from Apple
+//! - Process suspension via SIGSTOP is a best-effort mitigation
+//!
+//! **When to use eslogger:**
+//! - Local development without Apple Developer ID
+//! - Testing rule configurations before production deployment
+//! - Demonstrations and proof-of-concept work
+//!
+//! **When NOT to use eslogger:**
+//! - Production deployments
+//! - Any environment where security is critical
+//! - Systems where you need guaranteed blocking
+//!
+//! # Linux Monitoring
+//!
+//! On Linux, fanotify with FAN_OPEN_PERM provides true pre-access blocking,
+//! similar to ESF on macOS.
 
 #[cfg(target_os = "macos")]
 mod macos_eslogger;
+
+#[cfg(all(target_os = "macos", feature = "esf"))]
+mod macos_esf;
 
 #[cfg(target_os = "linux")]
 mod linux_fanotify;
@@ -43,11 +81,28 @@ pub trait Monitor: Send + Sync {
 }
 
 /// Monitoring mechanism to use.
+///
+/// # macOS Mechanisms
+///
+/// - **`Esf`** (PRODUCTION): Direct Endpoint Security Framework integration.
+///   Requires System Extension entitlement from Apple. Provides true pre-access
+///   blocking and is the only mechanism suitable for production use.
+///
+/// - **`Eslogger`** (DEVELOPMENT ONLY): Uses Apple's eslogger CLI tool.
+///   ⚠️ UNSTABLE - only for development/testing without entitlements.
+///   Cannot block access, only detect it after the fact.
+///
+/// # Other Platforms
+///
+/// - **`Fanotify`** (Linux): Uses fanotify with FAN_OPEN_PERM for true blocking.
+/// - **`Dtrace`** (FreeBSD): Uses DTrace for monitoring.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mechanism {
     Auto,
+    /// ⚠️ DEVELOPMENT ONLY - unstable, cannot block access
     #[cfg(target_os = "macos")]
     Eslogger,
+    /// PRODUCTION - requires System Extension entitlement
     #[cfg(target_os = "macos")]
     Esf,
     #[cfg(target_os = "linux")]
@@ -400,7 +455,10 @@ impl MonitorContext {
                 }
 
                 // Broadcast to connected clients
-                let _ = self.event_tx.send(event.clone());
+                // Note: send() fails if no receivers, which is normal during startup
+                if let Err(e) = self.event_tx.send(event.clone()) {
+                    tracing::debug!("No UI clients connected to receive violation event: {}", e);
+                }
 
                 Some(event)
             }
@@ -484,7 +542,12 @@ pub fn create_monitor(
     {
         match mechanism {
             Mechanism::Eslogger => Ok(Box::new(macos_eslogger::EsloggerMonitor::new(context))),
-            Mechanism::Esf => Err(Error::config("Direct ESF not yet implemented")),
+            #[cfg(feature = "esf")]
+            Mechanism::Esf => Ok(Box::new(macos_esf::EsfMonitor::new(context))),
+            #[cfg(not(feature = "esf"))]
+            Mechanism::Esf => Err(Error::config(
+                "ESF support not compiled in. Build with: cargo build --features esf",
+            )),
             _ => Err(Error::UnsupportedPlatform(format!("{:?}", mechanism))),
         }
     }

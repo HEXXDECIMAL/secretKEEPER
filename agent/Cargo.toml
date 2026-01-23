@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 description = "Secret exfiltration prevention daemon"
 
+[features]
+default = []
+esf = ["endpoint-sec"]
+
 [dependencies]
 tokio = { workspace = true }
 serde = { workspace = true }
@@ -25,6 +29,7 @@ async-trait = "0.1"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation = "0.10"
+endpoint-sec = { version = "0.4", optional = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # fanotify support via nix

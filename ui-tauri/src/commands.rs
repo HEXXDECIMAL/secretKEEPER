@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use crate::ipc_client::{AgentStatus, Exception, IpcClient, ViolationEvent};
+use crate::ipc_client::{AddExceptionParams, AgentStatus, Exception, IpcClient, ViolationEvent};
 
 type IpcState = Arc<Mutex<IpcClient>>;
 
@@ -42,10 +42,13 @@ pub async fn get_exceptions(client: tauri::State<'_, IpcState>) -> Result<Vec<Ex
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn add_exception(
     client: tauri::State<'_, IpcState>,
     process_path: Option<String>,
-    code_signer: Option<String>,
+    signer_type: Option<String>,
+    team_id: Option<String>,
+    signing_id: Option<String>,
     file_pattern: String,
     is_glob: bool,
     expires_hours: Option<i64>,
@@ -55,15 +58,19 @@ pub async fn add_exception(
 
     let expires_at = expires_hours.map(|h| chrono::Utc::now() + chrono::Duration::hours(h));
 
+    let params = AddExceptionParams {
+        process_path,
+        signer_type,
+        team_id,
+        signing_id,
+        file_pattern,
+        is_glob,
+        expires_at,
+        comment,
+    };
+
     client
-        .add_exception(
-            process_path,
-            code_signer,
-            file_pattern,
-            is_glob,
-            expires_at,
-            comment,
-        )
+        .add_exception(params)
         .await
         .map_err(|e| e.to_string())
 }
