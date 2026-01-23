@@ -2,4 +2,5 @@
 
 mod sqlite;
 
-pub use sqlite::{Storage, Violation};
+#[allow(unused_imports)]
+pub use sqlite::{LearnedObservation, LearnedStats, Storage, Violation};

@@ -2,7 +2,8 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use crate::ipc_client::{
-    AddExceptionParams, AgentStatus, Category, Exception, IpcClient, ViolationEvent,
+    AddExceptionParams, AgentStatus, Category, Exception, IpcClient, LearningRecommendation,
+    LearningStatus, ViolationEvent,
 };
 
 type IpcState = Arc<Mutex<IpcClient>>;
@@ -221,4 +222,88 @@ pub async fn export_violations(
         .map_err(|e| e.to_string())?;
 
     serde_json::to_string_pretty(&violations).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn get_learning_status(
+    client: tauri::State<'_, IpcState>,
+) -> Result<LearningStatus, String> {
+    client
+        .lock()
+        .await
+        .get_learning_status()
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn get_learning_recommendations(
+    client: tauri::State<'_, IpcState>,
+) -> Result<Vec<LearningRecommendation>, String> {
+    client
+        .lock()
+        .await
+        .get_learning_recommendations()
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn approve_learning(client: tauri::State<'_, IpcState>, id: i64) -> Result<(), String> {
+    client
+        .lock()
+        .await
+        .approve_learning(id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn reject_learning(client: tauri::State<'_, IpcState>, id: i64) -> Result<(), String> {
+    client
+        .lock()
+        .await
+        .reject_learning(id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn approve_all_learnings(client: tauri::State<'_, IpcState>) -> Result<(), String> {
+    client
+        .lock()
+        .await
+        .approve_all_learnings()
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn reject_all_learnings(client: tauri::State<'_, IpcState>) -> Result<(), String> {
+    client
+        .lock()
+        .await
+        .reject_all_learnings()
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn complete_learning_review(client: tauri::State<'_, IpcState>) -> Result<(), String> {
+    client
+        .lock()
+        .await
+        .complete_learning_review()
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn end_learning_early(client: tauri::State<'_, IpcState>) -> Result<(), String> {
+    client
+        .lock()
+        .await
+        .end_learning_early()
+        .await
+        .map_err(|e| e.to_string())
 }

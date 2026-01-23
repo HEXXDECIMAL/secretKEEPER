@@ -762,6 +762,22 @@ extension AppDelegate: IPCClientDelegate {
         }
     }
 
+    func ipcClient(_ client: IPCClient, didReceiveLearningStatus status: LearningStatus) {
+        appLogger.debug("Received learning status: state=\(status.state), pending=\(status.pendingCount)")
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            self.appState.learningStatus = status
+        }
+    }
+
+    func ipcClient(_ client: IPCClient, didReceiveLearningRecommendations recommendations: [LearningRecommendation]) {
+        appLogger.debug("Received \(recommendations.count) learning recommendations")
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            self.appState.learningRecommendations = recommendations
+        }
+    }
+
     private func showDegradedModeAlert() {
         appLogger.warning("Agent is running without FDA - showing prompt")
 
@@ -851,6 +867,9 @@ extension AppDelegate: IPCClientDelegate {
         client.getCategories()
         // Request violation history
         client.getViolations(limit: 100)
+        // Request learning status
+        client.getLearningStatus()
+        client.getLearningRecommendations()
     }
 
     func ipcClient(_ client: IPCClient, didReceiveAgentInfo info: AgentInfo) {

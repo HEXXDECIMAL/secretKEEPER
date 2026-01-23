@@ -131,6 +131,28 @@ pub struct Category {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LearningStatus {
+    pub state: String,
+    pub hours_remaining: u32,
+    pub pending_count: u32,
+    pub approved_count: u32,
+    pub rejected_count: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LearningRecommendation {
+    pub id: i64,
+    pub category_id: String,
+    pub process_path: String,
+    pub process_name: String,
+    pub team_id: Option<String>,
+    pub signing_id: Option<String>,
+    pub is_platform_binary: bool,
+    pub observation_count: u32,
+    pub status: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case")]
 pub enum Request {
     Subscribe {
@@ -175,6 +197,18 @@ pub enum Request {
         pid: u32,
     },
     Ping,
+    GetLearningStatus,
+    GetLearningRecommendations,
+    ApproveLearning {
+        id: i64,
+    },
+    RejectLearning {
+        id: i64,
+    },
+    ApproveAllLearnings,
+    RejectAllLearnings,
+    CompleteLearningReview,
+    EndLearningEarly,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -220,6 +254,16 @@ pub enum Response {
     },
     Event(ViolationEvent),
     Pong,
+    LearningStatus {
+        state: String,
+        hours_remaining: u32,
+        pending_count: u32,
+        approved_count: u32,
+        rejected_count: u32,
+    },
+    LearningRecommendations {
+        recommendations: Vec<LearningRecommendation>,
+    },
 }
 
 fn unexpected_response() -> io::Error {
@@ -509,6 +553,82 @@ impl IpcClient {
 
     pub async fn resume_process(&mut self, pid: u32) -> io::Result<()> {
         match self.send(&Request::ResumeProcess { pid }).await? {
+            Response::Success { .. } => Ok(()),
+            Response::Error { message } => Err(io::Error::other(message)),
+            _ => Err(unexpected_response()),
+        }
+    }
+
+    pub async fn get_learning_status(&mut self) -> io::Result<LearningStatus> {
+        match self.send(&Request::GetLearningStatus).await? {
+            Response::LearningStatus {
+                state,
+                hours_remaining,
+                pending_count,
+                approved_count,
+                rejected_count,
+            } => Ok(LearningStatus {
+                state,
+                hours_remaining,
+                pending_count,
+                approved_count,
+                rejected_count,
+            }),
+            Response::Error { message } => Err(io::Error::other(message)),
+            _ => Err(unexpected_response()),
+        }
+    }
+
+    pub async fn get_learning_recommendations(&mut self) -> io::Result<Vec<LearningRecommendation>> {
+        match self.send(&Request::GetLearningRecommendations).await? {
+            Response::LearningRecommendations { recommendations } => Ok(recommendations),
+            Response::Error { message } => Err(io::Error::other(message)),
+            _ => Err(unexpected_response()),
+        }
+    }
+
+    pub async fn approve_learning(&mut self, id: i64) -> io::Result<()> {
+        match self.send(&Request::ApproveLearning { id }).await? {
+            Response::Success { .. } => Ok(()),
+            Response::Error { message } => Err(io::Error::other(message)),
+            _ => Err(unexpected_response()),
+        }
+    }
+
+    pub async fn reject_learning(&mut self, id: i64) -> io::Result<()> {
+        match self.send(&Request::RejectLearning { id }).await? {
+            Response::Success { .. } => Ok(()),
+            Response::Error { message } => Err(io::Error::other(message)),
+            _ => Err(unexpected_response()),
+        }
+    }
+
+    pub async fn approve_all_learnings(&mut self) -> io::Result<()> {
+        match self.send(&Request::ApproveAllLearnings).await? {
+            Response::Success { .. } => Ok(()),
+            Response::Error { message } => Err(io::Error::other(message)),
+            _ => Err(unexpected_response()),
+        }
+    }
+
+    pub async fn reject_all_learnings(&mut self) -> io::Result<()> {
+        match self.send(&Request::RejectAllLearnings).await? {
+            Response::Success { .. } => Ok(()),
+            Response::Error { message } => Err(io::Error::other(message)),
+            _ => Err(unexpected_response()),
+        }
+    }
+
+    pub async fn complete_learning_review(&mut self) -> io::Result<()> {
+        match self.send(&Request::CompleteLearningReview).await? {
+            Response::Success { .. } => Ok(()),
+            Response::Error { message } => Err(io::Error::other(message)),
+            _ => Err(unexpected_response()),
+        }
+    }
+
+    pub async fn end_learning_early(&mut self) -> io::Result<()> {
+        match self.send(&Request::EndLearningEarly).await? {
             Response::Success { .. } => Ok(()),
             Response::Error { message } => Err(io::Error::other(message)),
             _ => Err(unexpected_response()),

@@ -4,8 +4,8 @@ mod schema;
 
 #[allow(unused_imports)]
 pub use schema::{
-    AgentConfig, Config, EnforcementConfig, ExceptionConfig, GlobalExclusion, MonitoringConfig,
-    ProtectedFile,
+    AgentConfig, Config, EnforcementConfig, ExceptionConfig, GlobalExclusion, LearningConfig,
+    MonitoringConfig, ProtectedFile,
 };
 
 use crate::error::{Error, Result};

@@ -1,6 +1,8 @@
 //! Request handlers for IPC commands.
 
-use super::protocol::{AddExceptionParams, Category, Request, Response, ViolationEvent};
+use super::protocol::{
+    AddExceptionParams, Category, LearningRecommendation, Request, Response, ViolationEvent,
+};
 use crate::rules::{Exception, RuleEngine, SignerType};
 use crate::storage::{Storage, Violation};
 use chrono::Utc;
@@ -109,6 +111,16 @@ impl HandlerState {
             Request::GetAgentInfo => self.handle_get_agent_info(),
 
             Request::ResumeProcess { pid } => self.handle_resume_process(pid),
+
+            // Learning mode commands
+            Request::GetLearningStatus => self.handle_get_learning_status(),
+            Request::GetLearningRecommendations => self.handle_get_learning_recommendations(),
+            Request::ApproveLearning { id } => self.handle_approve_learning(id),
+            Request::RejectLearning { id } => self.handle_reject_learning(id),
+            Request::ApproveAllLearnings => self.handle_approve_all_learnings(),
+            Request::RejectAllLearnings => self.handle_reject_all_learnings(),
+            Request::CompleteLearningReview => self.handle_complete_learning_review(),
+            Request::EndLearningEarly => self.handle_end_learning_early(),
         }
     }
 
@@ -270,6 +282,7 @@ impl HandlerState {
             added_by: "ui".to_string(),
             comment: params.comment,
             created_at: Utc::now(),
+            source: crate::rules::ExceptionSource::User,
         };
 
         match self.storage.add_exception(&exception) {
@@ -383,6 +396,7 @@ impl HandlerState {
             added_by: "ui".to_string(),
             comment,
             created_at: Utc::now(),
+            source: crate::rules::ExceptionSource::User,
         };
 
         if let Err(e) = self.storage.add_exception(&exception) {
@@ -513,6 +527,167 @@ fn violation_to_event(v: Violation) -> ViolationEvent {
         signing_id: v.signing_id,
         action: v.action,
         process_tree: v.process_tree,
+    }
+}
+
+// =============================================================================
+// Learning mode handlers
+// =============================================================================
+
+/// State key for learning mode persistence.
+const LEARNING_START_KEY: &str = "learning_start_time";
+const LEARNING_STATE_KEY: &str = "learning_state";
+const LEARNING_DURATION_HOURS: u64 = 24;
+
+impl HandlerState {
+    fn handle_get_learning_status(&self) -> Response {
+        // Get state from storage
+        let state = self
+            .storage
+            .get_state(LEARNING_STATE_KEY)
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| "disabled".to_string());
+
+        // Calculate hours remaining
+        let hours_remaining = if state == "learning" {
+            self.storage
+                .get_state(LEARNING_START_KEY)
+                .ok()
+                .flatten()
+                .and_then(|s| s.parse::<u64>().ok())
+                .map(|start| {
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs();
+                    let elapsed_hours = (now.saturating_sub(start)) / 3600;
+                    LEARNING_DURATION_HOURS.saturating_sub(elapsed_hours) as u32
+                })
+                .unwrap_or(0)
+        } else {
+            0
+        };
+
+        // Get counts
+        let stats = self.storage.count_learned_by_status().unwrap_or_default();
+
+        Response::LearningStatus {
+            state,
+            hours_remaining,
+            pending_count: stats.pending,
+            approved_count: stats.approved,
+            rejected_count: stats.rejected,
+        }
+    }
+
+    fn handle_get_learning_recommendations(&self) -> Response {
+        match self.storage.get_learned_exceptions("pending") {
+            Ok(learnings) => {
+                let recommendations: Vec<LearningRecommendation> = learnings
+                    .into_iter()
+                    .map(|l| LearningRecommendation {
+                        id: l.id,
+                        category_id: l.category_id,
+                        process_path: l.process_path,
+                        process_name: l.process_base,
+                        team_id: l.team_id,
+                        signing_id: l.signing_id,
+                        is_platform_binary: l.is_platform_binary,
+                        observation_count: l.observation_count,
+                        status: l.status,
+                    })
+                    .collect();
+                Response::LearningRecommendations { recommendations }
+            }
+            Err(e) => Response::error(format!("Failed to get recommendations: {}", e)),
+        }
+    }
+
+    fn handle_approve_learning(&self, id: i64) -> Response {
+        match self.storage.approve_learning(id) {
+            Ok(true) => Response::success(format!("Approved recommendation {}", id)),
+            Ok(false) => Response::error(format!(
+                "Recommendation {} not found or already processed",
+                id
+            )),
+            Err(e) => Response::error(format!("Failed to approve: {}", e)),
+        }
+    }
+
+    fn handle_reject_learning(&self, id: i64) -> Response {
+        match self.storage.reject_learning(id) {
+            Ok(true) => Response::success(format!("Rejected recommendation {}", id)),
+            Ok(false) => Response::error(format!(
+                "Recommendation {} not found or already processed",
+                id
+            )),
+            Err(e) => Response::error(format!("Failed to reject: {}", e)),
+        }
+    }
+
+    fn handle_approve_all_learnings(&self) -> Response {
+        match self.storage.approve_all_learnings() {
+            Ok(count) => Response::success(format!("Approved {} recommendations", count)),
+            Err(e) => Response::error(format!("Failed to approve all: {}", e)),
+        }
+    }
+
+    fn handle_reject_all_learnings(&self) -> Response {
+        match self.storage.reject_all_learnings() {
+            Ok(count) => Response::success(format!("Rejected {} recommendations", count)),
+            Err(e) => Response::error(format!("Failed to reject all: {}", e)),
+        }
+    }
+
+    fn handle_complete_learning_review(&self) -> Response {
+        // Check if there are pending recommendations
+        if self.storage.has_pending_learnings().unwrap_or(false) {
+            return Response::error(
+                "Cannot complete review: there are still pending recommendations. \
+                 Please approve or reject all recommendations first.",
+            );
+        }
+
+        // Migrate approved learnings to exceptions
+        let migrated = match self.storage.migrate_approved_to_exceptions() {
+            Ok(count) => count,
+            Err(e) => return Response::error(format!("Failed to migrate exceptions: {}", e)),
+        };
+
+        // Transition to complete state
+        if let Err(e) = self.storage.set_state(LEARNING_STATE_KEY, "complete") {
+            return Response::error(format!("Failed to update state: {}", e));
+        }
+
+        Response::success(format!(
+            "Learning review complete. Created {} exceptions.",
+            migrated
+        ))
+    }
+
+    fn handle_end_learning_early(&self) -> Response {
+        // Check current state
+        let current_state = self
+            .storage
+            .get_state(LEARNING_STATE_KEY)
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| "disabled".to_string());
+
+        if current_state != "learning" {
+            return Response::error(format!(
+                "Cannot end learning: current state is '{}', expected 'learning'",
+                current_state
+            ));
+        }
+
+        // Transition to pending_review
+        if let Err(e) = self.storage.set_state(LEARNING_STATE_KEY, "pending_review") {
+            return Response::error(format!("Failed to update state: {}", e));
+        }
+
+        Response::success("Learning period ended. Please review recommendations.")
     }
 }
 
@@ -785,6 +960,7 @@ mod tests {
             added_by: "test".to_string(),
             comment: None,
             created_at: Utc::now(),
+            source: crate::rules::ExceptionSource::User,
         };
         let id = state.storage.add_exception(&exception).unwrap();
 

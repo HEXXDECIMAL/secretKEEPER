@@ -79,6 +79,33 @@ pub enum Request {
     /// Resume a stopped process by PID (send SIGCONT).
     /// Used when the original violating process has exited but its parent remains stopped.
     ResumeProcess { pid: u32 },
+
+    // =========================================================================
+    // Learning mode commands
+    // =========================================================================
+    /// Get current learning mode status.
+    GetLearningStatus,
+
+    /// Get all pending learning recommendations for review.
+    GetLearningRecommendations,
+
+    /// Approve a single learning recommendation.
+    ApproveLearning { id: i64 },
+
+    /// Reject a single learning recommendation.
+    RejectLearning { id: i64 },
+
+    /// Approve all pending learning recommendations.
+    ApproveAllLearnings,
+
+    /// Reject (discard) all pending learning recommendations.
+    RejectAllLearnings,
+
+    /// Complete the learning review and transition to enforcement mode.
+    CompleteLearningReview,
+
+    /// End the learning period early (transition to pending review).
+    EndLearningEarly,
 }
 
 /// Parameters for adding a new exception.
@@ -170,6 +197,25 @@ pub enum Response {
         /// Agent version string.
         version: String,
     },
+
+    /// Learning mode status response.
+    LearningStatus {
+        /// Current state: "disabled", "learning", "pending_review", or "complete".
+        state: String,
+        /// Hours remaining in learning period (0 if not learning).
+        hours_remaining: u32,
+        /// Number of pending recommendations.
+        pending_count: u32,
+        /// Number of approved recommendations.
+        approved_count: u32,
+        /// Number of rejected recommendations.
+        rejected_count: u32,
+    },
+
+    /// Learning recommendations response.
+    LearningRecommendations {
+        recommendations: Vec<LearningRecommendation>,
+    },
 }
 
 /// A protected file category.
@@ -181,6 +227,31 @@ pub struct Category {
     pub enabled: bool,
     /// File patterns this category protects.
     pub patterns: Vec<String>,
+}
+
+/// A learning recommendation for user review.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LearningRecommendation {
+    /// Database ID for this recommendation.
+    pub id: i64,
+    /// Category that was accessed (e.g., "ssh_keys").
+    pub category_id: String,
+    /// Full path to the process.
+    pub process_path: String,
+    /// Base name of the process (e.g., "git").
+    pub process_name: String,
+    /// Apple Team ID if signed by a developer.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub team_id: Option<String>,
+    /// Code signing ID.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signing_id: Option<String>,
+    /// Whether this is a platform binary (Apple-signed).
+    pub is_platform_binary: bool,
+    /// Number of times this access was observed.
+    pub observation_count: u32,
+    /// Current status: "pending", "approved", or "rejected".
+    pub status: String,
 }
 
 #[allow(dead_code)]

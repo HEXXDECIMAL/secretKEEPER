@@ -8,6 +8,8 @@ protocol IPCClientDelegate: AnyObject {
     func ipcClient(_ client: IPCClient, didReceiveCategories categories: [ProtectedCategory])
     func ipcClient(_ client: IPCClient, didReceiveExceptions exceptions: [Exception])
     func ipcClient(_ client: IPCClient, didReceiveAgentInfo info: AgentInfo)
+    func ipcClient(_ client: IPCClient, didReceiveLearningStatus status: LearningStatus)
+    func ipcClient(_ client: IPCClient, didReceiveLearningRecommendations recommendations: [LearningRecommendation])
     func ipcClientDidConnect(_ client: IPCClient)
     func ipcClientDidDisconnect(_ client: IPCClient)
 }
@@ -319,6 +321,46 @@ class IPCClient: NSObject {
         send(GetAgentInfoRequest())
     }
 
+    /// Get learning mode status.
+    func getLearningStatus() {
+        send(GetLearningStatusRequest())
+    }
+
+    /// Get learning recommendations.
+    func getLearningRecommendations() {
+        send(GetLearningRecommendationsRequest())
+    }
+
+    /// Approve a learning recommendation by ID.
+    func approveLearning(id: Int64) {
+        send(ApproveLearningRequest(id: id))
+    }
+
+    /// Reject a learning recommendation by ID.
+    func rejectLearning(id: Int64) {
+        send(RejectLearningRequest(id: id))
+    }
+
+    /// Approve all pending learning recommendations.
+    func approveAllLearnings() {
+        send(ApproveAllLearningsRequest())
+    }
+
+    /// Reject all pending learning recommendations.
+    func rejectAllLearnings() {
+        send(RejectAllLearningsRequest())
+    }
+
+    /// Complete learning review and migrate approved items to exceptions.
+    func completeLearningReview() {
+        send(CompleteLearningReviewRequest())
+    }
+
+    /// End learning period early and transition to review.
+    func endLearningEarly() {
+        send(EndLearningEarlyRequest())
+    }
+
     // MARK: - Private
 
     private func send<T: Encodable>(_ request: T) {
@@ -486,6 +528,42 @@ class IPCClient: NSObject {
                     }
                 }
 
+            case "learning_status":
+                // Learning status response
+                if let state = json["state"] as? String,
+                   let hoursRemaining = json["hours_remaining"] as? UInt32,
+                   let pendingCount = json["pending_count"] as? UInt32,
+                   let approvedCount = json["approved_count"] as? UInt32,
+                   let rejectedCount = json["rejected_count"] as? UInt32 {
+                    let status = LearningStatus(
+                        state: state,
+                        hoursRemaining: hoursRemaining,
+                        pendingCount: pendingCount,
+                        approvedCount: approvedCount,
+                        rejectedCount: rejectedCount
+                    )
+                    DispatchQueue.main.async { [weak self] in
+                        guard let self = self else { return }
+                        self.delegate?.ipcClient(self, didReceiveLearningStatus: status)
+                    }
+                }
+
+            case "learning_recommendations":
+                // Learning recommendations response
+                if let recsArray = json["recommendations"] as? [[String: Any]] {
+                    var recommendations: [LearningRecommendation] = []
+                    for recDict in recsArray {
+                        if let recData = try? JSONSerialization.data(withJSONObject: recDict),
+                           let rec = try? decoder.decode(LearningRecommendation.self, from: recData) {
+                            recommendations.append(rec)
+                        }
+                    }
+                    DispatchQueue.main.async { [weak self] in
+                        guard let self = self else { return }
+                        self.delegate?.ipcClient(self, didReceiveLearningRecommendations: recommendations)
+                    }
+                }
+
             case "success", "error", "pong", "config":
                 // Handle other response types as needed
                 break
@@ -620,5 +698,39 @@ private struct SetCategoryEnabledRequest: Encodable {
 
 private struct GetAgentInfoRequest: Encodable {
     let action = "get_agent_info"
+}
+
+private struct GetLearningStatusRequest: Encodable {
+    let action = "get_learning_status"
+}
+
+private struct GetLearningRecommendationsRequest: Encodable {
+    let action = "get_learning_recommendations"
+}
+
+private struct ApproveLearningRequest: Encodable {
+    let action = "approve_learning"
+    let id: Int64
+}
+
+private struct RejectLearningRequest: Encodable {
+    let action = "reject_learning"
+    let id: Int64
+}
+
+private struct ApproveAllLearningsRequest: Encodable {
+    let action = "approve_all_learnings"
+}
+
+private struct RejectAllLearningsRequest: Encodable {
+    let action = "reject_all_learnings"
+}
+
+private struct CompleteLearningReviewRequest: Encodable {
+    let action = "complete_learning_review"
+}
+
+private struct EndLearningEarlyRequest: Encodable {
+    let action = "end_learning_early"
 }
 

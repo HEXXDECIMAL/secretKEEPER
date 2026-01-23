@@ -2,7 +2,7 @@
 
 use crate::error::{Error, Result};
 use crate::process::ProcessTreeEntry;
-use crate::rules::{Exception, SignerType};
+use crate::rules::{Exception, ExceptionSource, SignerType};
 use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection, OptionalExtension};
 use std::path::Path;
@@ -102,6 +102,27 @@ impl Storage {
                 value TEXT,
                 updated_at TEXT DEFAULT CURRENT_TIMESTAMP
             );
+
+            CREATE TABLE IF NOT EXISTS learned_exceptions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                -- What category was accessed
+                category_id TEXT NOT NULL,
+                -- Process identification
+                process_path TEXT NOT NULL,
+                process_base TEXT NOT NULL,
+                team_id TEXT,
+                signing_id TEXT,
+                is_platform_binary INTEGER DEFAULT 0,
+                -- Learning metadata
+                first_seen TEXT NOT NULL,
+                last_seen TEXT NOT NULL,
+                observation_count INTEGER DEFAULT 1,
+                -- Status: pending, approved, rejected
+                status TEXT DEFAULT 'pending',
+                UNIQUE(category_id, process_path, team_id, signing_id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_learned_status ON learned_exceptions(status);
             "#,
         )?;
 
@@ -168,6 +189,29 @@ impl Storage {
             CREATE INDEX IF NOT EXISTS idx_exceptions_team_id ON exceptions(team_id);
             CREATE INDEX IF NOT EXISTS idx_exceptions_signing_id ON exceptions(signing_id);
             "#,
+        )?;
+
+        // Add source column to exceptions table (config, user, learned)
+        let has_source: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('exceptions') WHERE name = 'source'",
+                [],
+                |row| row.get::<_, i32>(0),
+            )
+            .map(|count| count > 0)
+            .unwrap_or(false);
+
+        if !has_source {
+            tracing::info!("Migrating exceptions table: adding source column");
+            conn.execute_batch(
+                r#"
+                ALTER TABLE exceptions ADD COLUMN source TEXT DEFAULT 'user';
+                "#,
+            )?;
+        }
+
+        conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS idx_exceptions_source ON exceptions(source);",
         )?;
 
         Ok(())
@@ -312,8 +356,8 @@ impl Storage {
             r#"
             INSERT INTO exceptions (
                 process_path, signer_type, team_id, signing_id,
-                file_pattern, is_glob, expires_at, added_by, comment
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+                file_pattern, is_glob, expires_at, added_by, comment, source
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
             "#,
             params![
                 exception.process_path,
@@ -325,6 +369,7 @@ impl Storage {
                 exception.expires_at.map(|dt| dt.to_rfc3339()),
                 exception.added_by,
                 exception.comment,
+                exception.source.to_string(),
             ],
         )?;
 
@@ -348,6 +393,8 @@ impl Storage {
             let created_at_str: String = row.get("created_at")?;
             let signer_type_str: Option<String> = row.get("signer_type")?;
 
+            let source_str: Option<String> = row.get("source").ok();
+
             exceptions.push(Exception {
                 id: row.get("id")?,
                 process_path: row.get("process_path")?,
@@ -366,6 +413,9 @@ impl Storage {
                 created_at: DateTime::parse_from_rfc3339(&created_at_str)
                     .map(|dt| dt.with_timezone(&Utc))
                     .unwrap_or_else(|_| Utc::now()),
+                source: source_str
+                    .and_then(|s| s.parse::<ExceptionSource>().ok())
+                    .unwrap_or_default(),
             });
         }
 
@@ -412,6 +462,394 @@ impl Storage {
         conn.query_row("SELECT COUNT(*) FROM violations", [], |row| row.get(0))
             .map_err(Error::from)
     }
+
+    /// Record or update a learned exception observation.
+    #[allow(dead_code)]
+    pub fn record_learned_observation(&self, obs: &LearnedObservation) -> Result<()> {
+        let conn = self.lock();
+        let now = Utc::now().to_rfc3339();
+
+        // Try to update existing record first
+        let updated = conn.execute(
+            r#"
+            UPDATE learned_exceptions
+            SET last_seen = ?1, observation_count = observation_count + 1
+            WHERE category_id = ?2 AND process_path = ?3
+              AND (team_id = ?4 OR (team_id IS NULL AND ?4 IS NULL))
+              AND (signing_id = ?5 OR (signing_id IS NULL AND ?5 IS NULL))
+            "#,
+            params![
+                now,
+                obs.category_id,
+                obs.process_path,
+                obs.team_id,
+                obs.signing_id
+            ],
+        )?;
+
+        if updated == 0 {
+            // Insert new record
+            conn.execute(
+                r#"
+                INSERT INTO learned_exceptions (
+                    category_id, process_path, process_base, team_id, signing_id,
+                    is_platform_binary, first_seen, last_seen, observation_count, status
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7, 1, 'pending')
+                "#,
+                params![
+                    obs.category_id,
+                    obs.process_path,
+                    obs.process_base,
+                    obs.team_id,
+                    obs.signing_id,
+                    obs.is_platform_binary as i32,
+                    now,
+                ],
+            )?;
+        }
+
+        Ok(())
+    }
+
+    /// Get all learned exceptions with a given status.
+    #[allow(dead_code)]
+    pub fn get_learned_exceptions(&self, status: &str) -> Result<Vec<LearnedObservation>> {
+        let conn = self.lock();
+        let mut results = Vec::new();
+
+        let mut stmt = conn.prepare(
+            "SELECT * FROM learned_exceptions WHERE status = ?1 ORDER BY observation_count DESC",
+        )?;
+
+        let rows = stmt.query(params![status])?;
+        let mut rows = rows;
+
+        while let Some(row) = rows.next()? {
+            results.push(LearnedObservation {
+                id: row.get("id")?,
+                category_id: row.get("category_id")?,
+                process_path: row.get("process_path")?,
+                process_base: row.get("process_base")?,
+                team_id: row.get("team_id")?,
+                signing_id: row.get("signing_id")?,
+                is_platform_binary: row.get::<_, i32>("is_platform_binary")? != 0,
+                observation_count: row.get("observation_count")?,
+                status: row.get("status")?,
+            });
+        }
+
+        Ok(results)
+    }
+
+    /// Update the status of a learned exception.
+    #[allow(dead_code)]
+    pub fn update_learned_status(&self, id: i64, status: &str) -> Result<bool> {
+        let conn = self.lock();
+        let updated = conn.execute(
+            "UPDATE learned_exceptions SET status = ?1 WHERE id = ?2",
+            params![status, id],
+        )?;
+        Ok(updated > 0)
+    }
+
+    /// Check if a process is in the approved learned exceptions.
+    #[allow(dead_code)]
+    pub fn is_learned_approved(
+        &self,
+        category_id: &str,
+        process_path: &str,
+        team_id: Option<&str>,
+        signing_id: Option<&str>,
+    ) -> Result<bool> {
+        let conn = self.lock();
+
+        let count: i32 = conn.query_row(
+            r#"
+            SELECT COUNT(*) FROM learned_exceptions
+            WHERE category_id = ?1 AND process_path = ?2 AND status = 'approved'
+              AND (team_id = ?3 OR (team_id IS NULL AND ?3 IS NULL))
+              AND (signing_id = ?4 OR (signing_id IS NULL AND ?4 IS NULL))
+            "#,
+            params![category_id, process_path, team_id, signing_id],
+            |row| row.get(0),
+        )?;
+
+        Ok(count > 0)
+    }
+
+    /// Count learned exceptions by status.
+    #[allow(dead_code)]
+    pub fn count_learned_by_status(&self) -> Result<LearnedStats> {
+        let conn = self.lock();
+
+        let pending: i32 = conn.query_row(
+            "SELECT COUNT(*) FROM learned_exceptions WHERE status = 'pending'",
+            [],
+            |row| row.get(0),
+        )?;
+
+        let approved: i32 = conn.query_row(
+            "SELECT COUNT(*) FROM learned_exceptions WHERE status = 'approved'",
+            [],
+            |row| row.get(0),
+        )?;
+
+        let rejected: i32 = conn.query_row(
+            "SELECT COUNT(*) FROM learned_exceptions WHERE status = 'rejected'",
+            [],
+            |row| row.get(0),
+        )?;
+
+        Ok(LearnedStats {
+            pending: pending as u32,
+            approved: approved as u32,
+            rejected: rejected as u32,
+        })
+    }
+
+    /// Auto-approve pending learned exceptions that meet criteria.
+    #[allow(dead_code)]
+    pub fn auto_approve_learned(
+        &self,
+        min_observations: u32,
+        require_team_id: bool,
+        allow_platform_binary: bool,
+    ) -> Result<u32> {
+        let conn = self.lock();
+
+        // Build the approval condition
+        let mut conditions = vec!["status = 'pending'".to_string()];
+        conditions.push(format!("observation_count >= {}", min_observations));
+
+        // Must have either team_id or be a platform binary
+        let mut trust_conditions = Vec::new();
+        if !require_team_id || allow_platform_binary {
+            // If we allow platform binaries without team_id
+            if allow_platform_binary {
+                trust_conditions.push("is_platform_binary = 1".to_string());
+            }
+        }
+        if require_team_id {
+            trust_conditions.push("team_id IS NOT NULL".to_string());
+        } else {
+            // If not requiring team_id, still need some trust signal
+            trust_conditions.push("team_id IS NOT NULL".to_string());
+        }
+
+        if !trust_conditions.is_empty() {
+            conditions.push(format!("({})", trust_conditions.join(" OR ")));
+        }
+
+        let query = format!(
+            "UPDATE learned_exceptions SET status = 'approved' WHERE {}",
+            conditions.join(" AND ")
+        );
+
+        let approved = conn.execute(&query, [])?;
+        Ok(approved as u32)
+    }
+
+    /// Approve a single pending learning by ID.
+    #[allow(dead_code)]
+    pub fn approve_learning(&self, id: i64) -> Result<bool> {
+        let conn = self.lock();
+        let updated = conn.execute(
+            "UPDATE learned_exceptions SET status = 'approved' WHERE id = ?1 AND status = 'pending'",
+            params![id],
+        )?;
+        Ok(updated > 0)
+    }
+
+    /// Reject a single pending learning by ID.
+    #[allow(dead_code)]
+    pub fn reject_learning(&self, id: i64) -> Result<bool> {
+        let conn = self.lock();
+        let updated = conn.execute(
+            "UPDATE learned_exceptions SET status = 'rejected' WHERE id = ?1 AND status = 'pending'",
+            params![id],
+        )?;
+        Ok(updated > 0)
+    }
+
+    /// Approve all pending learnings at once.
+    #[allow(dead_code)]
+    pub fn approve_all_learnings(&self) -> Result<u32> {
+        let conn = self.lock();
+        let updated = conn.execute(
+            "UPDATE learned_exceptions SET status = 'approved' WHERE status = 'pending'",
+            [],
+        )?;
+        Ok(updated as u32)
+    }
+
+    /// Reject all pending learnings at once (discard all recommendations).
+    #[allow(dead_code)]
+    pub fn reject_all_learnings(&self) -> Result<u32> {
+        let conn = self.lock();
+        let updated = conn.execute(
+            "UPDATE learned_exceptions SET status = 'rejected' WHERE status = 'pending'",
+            [],
+        )?;
+        Ok(updated as u32)
+    }
+
+    /// Migrate all approved learnings to the exceptions table.
+    /// Returns the number of exceptions created.
+    #[allow(dead_code)]
+    pub fn migrate_approved_to_exceptions(&self) -> Result<u32> {
+        let conn = self.lock();
+        let mut count = 0;
+
+        // Get all approved learnings
+        let mut stmt =
+            conn.prepare("SELECT * FROM learned_exceptions WHERE status = 'approved'")?;
+
+        let learnings: Vec<LearnedObservation> = {
+            let rows = stmt.query([])?;
+            let mut rows = rows;
+            let mut results = Vec::new();
+
+            while let Some(row) = rows.next()? {
+                results.push(LearnedObservation {
+                    id: row.get("id")?,
+                    category_id: row.get("category_id")?,
+                    process_path: row.get("process_path")?,
+                    process_base: row.get("process_base")?,
+                    team_id: row.get("team_id")?,
+                    signing_id: row.get("signing_id")?,
+                    is_platform_binary: row.get::<_, i32>("is_platform_binary")? != 0,
+                    observation_count: row.get("observation_count")?,
+                    status: row.get("status")?,
+                });
+            }
+            results
+        };
+
+        // Insert each as an exception
+        for learning in learnings {
+            // Determine signer type based on what we have
+            let signer_type = if learning.team_id.is_some() {
+                Some("team_id")
+            } else if learning.signing_id.is_some() {
+                Some("signing_id")
+            } else {
+                None
+            };
+
+            // Build file pattern from category (e.g., "ssh_keys" -> "~/.ssh/*")
+            // For now, use a broad pattern based on category
+            let file_pattern = "*".to_string(); // Will match any file in that category
+
+            let comment = format!(
+                "Learned: {} accessed {} files ({} times)",
+                learning.process_base, learning.category_id, learning.observation_count
+            );
+
+            conn.execute(
+                r#"
+                INSERT INTO exceptions (
+                    process_path, signer_type, team_id, signing_id,
+                    file_pattern, is_glob, expires_at, added_by, comment, source
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, 'learning', ?7, 'learned')
+                "#,
+                params![
+                    learning.process_path,
+                    signer_type,
+                    learning.team_id,
+                    learning.signing_id,
+                    file_pattern,
+                    1, // is_glob = true
+                    comment,
+                ],
+            )?;
+            count += 1;
+        }
+
+        // Mark migrated learnings so we don't re-migrate
+        conn.execute(
+            "UPDATE learned_exceptions SET status = 'migrated' WHERE status = 'approved'",
+            [],
+        )?;
+
+        Ok(count)
+    }
+
+    /// Check if there are any pending learnings waiting for review.
+    #[allow(dead_code)]
+    pub fn has_pending_learnings(&self) -> Result<bool> {
+        let conn = self.lock();
+        let count: i32 = conn.query_row(
+            "SELECT COUNT(*) FROM learned_exceptions WHERE status = 'pending'",
+            [],
+            |row| row.get(0),
+        )?;
+        Ok(count > 0)
+    }
+}
+
+/// A learned exception observation.
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct LearnedObservation {
+    pub id: i64,
+    pub category_id: String,
+    pub process_path: String,
+    pub process_base: String,
+    pub team_id: Option<String>,
+    pub signing_id: Option<String>,
+    pub is_platform_binary: bool,
+    pub observation_count: u32,
+    pub status: String,
+}
+
+#[allow(dead_code)]
+impl LearnedObservation {
+    /// Create a new observation (id will be set by database).
+    #[must_use]
+    pub fn new(
+        category_id: impl Into<String>,
+        process_path: impl Into<String>,
+        process_base: impl Into<String>,
+    ) -> Self {
+        Self {
+            id: 0,
+            category_id: category_id.into(),
+            process_path: process_path.into(),
+            process_base: process_base.into(),
+            team_id: None,
+            signing_id: None,
+            is_platform_binary: false,
+            observation_count: 1,
+            status: "pending".into(),
+        }
+    }
+
+    #[must_use]
+    pub fn with_team_id(mut self, team_id: impl Into<String>) -> Self {
+        self.team_id = Some(team_id.into());
+        self
+    }
+
+    #[must_use]
+    pub fn with_signing_id(mut self, signing_id: impl Into<String>) -> Self {
+        self.signing_id = Some(signing_id.into());
+        self
+    }
+
+    #[must_use]
+    pub fn with_platform_binary(mut self, is_platform: bool) -> Self {
+        self.is_platform_binary = is_platform;
+        self
+    }
+}
+
+/// Statistics about learned exceptions.
+#[derive(Debug, Clone, Default)]
+#[allow(dead_code)]
+pub struct LearnedStats {
+    pub pending: u32,
+    pub approved: u32,
+    pub rejected: u32,
 }
 
 /// A recorded violation.
@@ -572,6 +1010,7 @@ mod tests {
             added_by: "test".to_string(),
             comment: Some("Test exception".to_string()),
             created_at: Utc::now(),
+            source: ExceptionSource::User,
         };
 
         let id = storage.add_exception(&exception).unwrap();
@@ -691,6 +1130,7 @@ mod tests {
             added_by: "test".to_string(),
             comment: None,
             created_at: Utc::now(),
+            source: ExceptionSource::User,
         };
         storage.add_exception(&valid_exception).unwrap();
 
@@ -707,6 +1147,7 @@ mod tests {
             added_by: "test".to_string(),
             comment: None,
             created_at: Utc::now() - Duration::hours(2),
+            source: ExceptionSource::User,
         };
         storage.add_exception(&expired_exception).unwrap();
 
@@ -732,6 +1173,7 @@ mod tests {
             added_by: "test".to_string(),
             comment: Some("Allow all Apple-signed apps".to_string()),
             created_at: Utc::now(),
+            source: ExceptionSource::User,
         };
 
         let id = storage.add_exception(&exception).unwrap();
@@ -828,6 +1270,7 @@ mod tests {
             added_by: "test".to_string(),
             comment: None,
             created_at: Utc::now(),
+            source: ExceptionSource::User,
         };
         storage.add_exception(&exception).unwrap();
 
@@ -910,6 +1353,7 @@ mod tests {
             added_by: "test".to_string(),
             comment: Some("Allow platform binary".to_string()),
             created_at: Utc::now(),
+            source: ExceptionSource::User,
         };
 
         let id = storage.add_exception(&exception).unwrap();
@@ -941,6 +1385,7 @@ mod tests {
             added_by: "test".to_string(),
             comment: None,
             created_at: Utc::now(),
+            source: ExceptionSource::User,
         };
 
         storage.add_exception(&exception).unwrap();
@@ -966,6 +1411,7 @@ mod tests {
             added_by: "test".to_string(),
             comment: None,
             created_at: Utc::now(),
+            source: ExceptionSource::User,
         };
 
         storage.add_exception(&exception).unwrap();
@@ -1012,6 +1458,7 @@ mod tests {
                 added_by: "test".to_string(),
                 comment: None,
                 created_at: Utc::now(),
+                source: ExceptionSource::User,
             };
             storage.add_exception(&exception).unwrap();
         }
@@ -1044,6 +1491,7 @@ mod tests {
             added_by: "test".to_string(),
             comment: None,
             created_at: Utc::now(),
+            source: ExceptionSource::User,
         };
 
         storage.add_exception(&exception).unwrap();
@@ -1074,6 +1522,7 @@ mod tests {
             added_by: "test".to_string(),
             comment: None,
             created_at: Utc::now(),
+            source: ExceptionSource::User,
         };
 
         storage.add_exception(&exception).unwrap();

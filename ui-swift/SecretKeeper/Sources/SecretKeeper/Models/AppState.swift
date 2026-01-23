@@ -14,6 +14,8 @@ class AppState: ObservableObject {
     @Published var categories: [ProtectedCategory] = []
     @Published var totalViolations: Int = 0
     @Published var mode: EnforcementMode = .block
+    @Published var learningStatus: LearningStatus?
+    @Published var learningRecommendations: [LearningRecommendation] = []
 
     /// Entry ID to select when opening the history window (set by menubar clicks).
     @Published var selectedHistoryEntryId: String?
@@ -101,4 +103,55 @@ struct AgentStatus: Codable {
         case uptimeSecs = "uptime_secs"
         case totalViolations = "total_violations"
     }
+}
+
+/// Learning mode status from the agent.
+struct LearningStatus: Codable {
+    let state: String
+    let hoursRemaining: UInt32
+    let pendingCount: UInt32
+    let approvedCount: UInt32
+    let rejectedCount: UInt32
+
+    enum CodingKeys: String, CodingKey {
+        case state
+        case hoursRemaining = "hours_remaining"
+        case pendingCount = "pending_count"
+        case approvedCount = "approved_count"
+        case rejectedCount = "rejected_count"
+    }
+
+    var isLearning: Bool { state == "learning" }
+    var isPendingReview: Bool { state == "pending_review" }
+    var isComplete: Bool { state == "complete" }
+    var isDisabled: Bool { state == "disabled" }
+}
+
+/// A learning recommendation from observed process behavior.
+struct LearningRecommendation: Codable, Identifiable {
+    let id: Int64
+    let categoryId: String
+    let processPath: String
+    let processName: String
+    let teamId: String?
+    let signingId: String?
+    let isPlatformBinary: Bool
+    let observationCount: UInt32
+    let status: String
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case categoryId = "category_id"
+        case processPath = "process_path"
+        case processName = "process_name"
+        case teamId = "team_id"
+        case signingId = "signing_id"
+        case isPlatformBinary = "is_platform_binary"
+        case observationCount = "observation_count"
+        case status
+    }
+
+    var isPending: Bool { status == "pending" }
+    var isApproved: Bool { status == "approved" }
+    var isRejected: Bool { status == "rejected" }
 }

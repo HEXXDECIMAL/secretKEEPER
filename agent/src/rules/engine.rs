@@ -254,7 +254,7 @@ impl RuleEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::rules::SignerType;
+    use crate::rules::{ExceptionSource, SignerType};
     use chrono::{Duration, Utc};
     use std::path::PathBuf;
 
@@ -333,6 +333,7 @@ mod tests {
             added_by: "test".to_string(),
             comment: None,
             created_at: Utc::now(),
+            source: ExceptionSource::User,
         };
         engine.set_exceptions(vec![exception]);
 
@@ -357,6 +358,7 @@ mod tests {
             added_by: "test".to_string(),
             comment: None,
             created_at: Utc::now() - Duration::hours(2),
+            source: ExceptionSource::User,
         };
         engine.set_exceptions(vec![exception]);
 
@@ -381,6 +383,7 @@ mod tests {
             added_by: "test".to_string(),
             comment: None,
             created_at: Utc::now(),
+            source: ExceptionSource::User,
         };
         engine.set_exceptions(vec![exception]);
 
@@ -410,6 +413,7 @@ mod tests {
             added_by: "test".to_string(),
             comment: None,
             created_at: Utc::now(),
+            source: ExceptionSource::User,
         };
         engine.add_exception(exception);
 
@@ -530,6 +534,7 @@ mod tests {
             added_by: "test".to_string(),
             comment: None,
             created_at: Utc::now(),
+            source: ExceptionSource::User,
         };
         engine.set_exceptions(vec![exception]);
 

@@ -8,12 +8,14 @@ struct SettingsView: View {
 
     enum SettingsTab: String, CaseIterable {
         case general = "General"
+        case learning = "Learning"
         case protection = "Protection"
         case exceptions = "Exceptions"
 
         var icon: String {
             switch self {
             case .general: return "gear"
+            case .learning: return "graduationcap"
             case .protection: return "shield"
             case .exceptions: return "checkmark.shield"
             }
@@ -28,6 +30,12 @@ struct SettingsView: View {
                 }
                 .tag(SettingsTab.general)
 
+            LearningSettingsView()
+                .tabItem {
+                    Label(SettingsTab.learning.rawValue, systemImage: SettingsTab.learning.icon)
+                }
+                .tag(SettingsTab.learning)
+
             ProtectionSettingsView()
                 .tabItem {
                     Label(SettingsTab.protection.rawValue, systemImage: SettingsTab.protection.icon)
@@ -40,7 +48,7 @@ struct SettingsView: View {
                 }
                 .tag(SettingsTab.exceptions)
         }
-        .frame(width: 500, height: 500)
+        .frame(width: 500, height: 550)
     }
 }
 
@@ -100,6 +108,184 @@ struct GeneralSettingsView: View {
         }
         .formStyle(.grouped)
         .padding()
+    }
+}
+
+struct LearningSettingsView: View {
+    @EnvironmentObject var appState: AppState
+
+    var body: some View {
+        Form {
+            if let status = appState.learningStatus {
+                Section("Learning Mode") {
+                    LabeledContent("Status") {
+                        HStack(spacing: 6) {
+                            Circle()
+                                .fill(statusColor(for: status))
+                                .frame(width: 8, height: 8)
+                            Text(statusText(for: status))
+                        }
+                    }
+
+                    if status.isLearning {
+                        LabeledContent("Time Remaining") {
+                            Text("\(status.hoursRemaining) hours")
+                        }
+
+                        Button("End Learning Early") {
+                            AppDelegate.shared?.ipcClient?.endLearningEarly()
+                            refreshLearningStatus()
+                        }
+                    }
+
+                    if status.isPendingReview {
+                        LabeledContent("Pending") {
+                            Text("\(status.pendingCount)")
+                        }
+                        LabeledContent("Approved") {
+                            Text("\(status.approvedCount)")
+                                .foregroundColor(.green)
+                        }
+                        LabeledContent("Rejected") {
+                            Text("\(status.rejectedCount)")
+                                .foregroundColor(.red)
+                        }
+                    }
+                }
+
+                if status.isPendingReview {
+                    Section("Recommendations") {
+                        if appState.learningRecommendations.isEmpty {
+                            Text("No recommendations to review")
+                                .foregroundColor(.secondary)
+                        } else {
+                            ForEach(appState.learningRecommendations.filter { $0.isPending }) { rec in
+                                LearningRecommendationRow(recommendation: rec)
+                            }
+                        }
+                    }
+
+                    Section {
+                        HStack {
+                            Button("Approve All") {
+                                AppDelegate.shared?.ipcClient?.approveAllLearnings()
+                                refreshLearningStatus()
+                            }
+                            .buttonStyle(.borderedProminent)
+
+                            Button("Reject All") {
+                                AppDelegate.shared?.ipcClient?.rejectAllLearnings()
+                                refreshLearningStatus()
+                            }
+                            .buttonStyle(.bordered)
+
+                            Spacer()
+
+                            Button("Complete Review") {
+                                AppDelegate.shared?.ipcClient?.completeLearningReview()
+                                refreshLearningStatus()
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(.green)
+                        }
+                    }
+                }
+
+                if status.isComplete || status.isDisabled {
+                    Section {
+                        Text("Learning mode is not active. It runs automatically on first install to learn which applications normally access your protected files.")
+                            .foregroundColor(.secondary)
+                            .font(.caption)
+                    }
+                }
+            } else {
+                Section {
+                    Text("Loading learning status...")
+                        .foregroundColor(.secondary)
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .padding()
+        .onAppear {
+            refreshLearningStatus()
+        }
+    }
+
+    private func refreshLearningStatus() {
+        AppDelegate.shared?.ipcClient?.getLearningStatus()
+        AppDelegate.shared?.ipcClient?.getLearningRecommendations()
+    }
+
+    private func statusColor(for status: LearningStatus) -> Color {
+        if status.isLearning { return .blue }
+        if status.isPendingReview { return .orange }
+        if status.isComplete { return .green }
+        return .gray
+    }
+
+    private func statusText(for status: LearningStatus) -> String {
+        if status.isLearning { return "Learning" }
+        if status.isPendingReview { return "Pending Review" }
+        if status.isComplete { return "Complete" }
+        return "Disabled"
+    }
+}
+
+struct LearningRecommendationRow: View {
+    @EnvironmentObject var appState: AppState
+    let recommendation: LearningRecommendation
+
+    var body: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(recommendation.processName)
+                    .font(.headline)
+                HStack(spacing: 8) {
+                    Text(recommendation.categoryId.replacingOccurrences(of: "_", with: " ").capitalized)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Text("(\(recommendation.observationCount) observations)")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                if let teamId = recommendation.teamId {
+                    Label(teamId, systemImage: "signature")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+
+            Spacer()
+
+            HStack(spacing: 8) {
+                Button {
+                    AppDelegate.shared?.ipcClient?.approveLearning(id: recommendation.id)
+                    refreshAfterAction()
+                } label: {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundColor(.green)
+                }
+                .buttonStyle(.plain)
+
+                Button {
+                    AppDelegate.shared?.ipcClient?.rejectLearning(id: recommendation.id)
+                    refreshAfterAction()
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundColor(.red)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    private func refreshAfterAction() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            AppDelegate.shared?.ipcClient?.getLearningStatus()
+            AppDelegate.shared?.ipcClient?.getLearningRecommendations()
+        }
     }
 }
 

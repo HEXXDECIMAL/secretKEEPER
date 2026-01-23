@@ -43,6 +43,42 @@ impl std::str::FromStr for SignerType {
     }
 }
 
+/// Source of an exception - how it was created.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ExceptionSource {
+    /// Added from configuration file.
+    Config,
+    /// Manually added by user.
+    #[default]
+    User,
+    /// Auto-discovered during learning mode and approved by user.
+    Learned,
+}
+
+impl fmt::Display for ExceptionSource {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ExceptionSource::Config => write!(f, "config"),
+            ExceptionSource::User => write!(f, "user"),
+            ExceptionSource::Learned => write!(f, "learned"),
+        }
+    }
+}
+
+impl std::str::FromStr for ExceptionSource {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "config" => Ok(ExceptionSource::Config),
+            "user" => Ok(ExceptionSource::User),
+            "learned" => Ok(ExceptionSource::Learned),
+            _ => Err(format!("unknown exception source: {}", s)),
+        }
+    }
+}
+
 /// A runtime exception that allows a process to access protected files.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Exception {
@@ -68,6 +104,9 @@ pub struct Exception {
     pub comment: Option<String>,
     /// When this exception was created.
     pub created_at: DateTime<Utc>,
+    /// How this exception was created (config, user, learned).
+    #[serde(default)]
+    pub source: ExceptionSource,
 }
 
 impl Exception {
@@ -164,6 +203,7 @@ pub struct ExceptionBuilder {
     expires_at: Option<DateTime<Utc>>,
     added_by: String,
     comment: Option<String>,
+    source: ExceptionSource,
 }
 
 #[allow(dead_code)]
@@ -180,7 +220,14 @@ impl ExceptionBuilder {
             expires_at: None,
             added_by: added_by.into(),
             comment: None,
+            source: ExceptionSource::User,
         }
+    }
+
+    #[must_use]
+    pub fn source(mut self, source: ExceptionSource) -> Self {
+        self.source = source;
+        self
     }
 
     #[must_use]
@@ -242,6 +289,7 @@ impl ExceptionBuilder {
             added_by: self.added_by,
             comment: self.comment,
             created_at: Utc::now(),
+            source: self.source,
         }
     }
 }
@@ -260,6 +308,7 @@ mod tests {
             team_id: None,
             signing_id: None,
             file_pattern: file_pattern.to_string(),
+            source: ExceptionSource::User,
             is_glob,
             expires_at: None,
             added_by: "test".to_string(),
@@ -313,6 +362,7 @@ mod tests {
             added_by: "test".to_string(),
             comment: None,
             created_at: Utc::now(),
+            source: ExceptionSource::User,
         };
 
         // Matching team_id
@@ -346,6 +396,7 @@ mod tests {
             added_by: "test".to_string(),
             comment: None,
             created_at: Utc::now(),
+            source: ExceptionSource::User,
         };
 
         // Matching signing_id (platform binary case)
@@ -389,6 +440,7 @@ mod tests {
             added_by: "test".to_string(),
             comment: None,
             created_at: Utc::now(),
+            source: ExceptionSource::User,
         };
 
         // Adhoc with matching signing_id
@@ -426,6 +478,7 @@ mod tests {
             added_by: "test".to_string(),
             comment: None,
             created_at: Utc::now(),
+            source: ExceptionSource::User,
         };
 
         // Any adhoc process matches
@@ -454,6 +507,7 @@ mod tests {
             added_by: "test".to_string(),
             comment: None,
             created_at: Utc::now(),
+            source: ExceptionSource::User,
         };
 
         // Unsigned process (no team_id, no signing_id, not adhoc)
@@ -564,6 +618,7 @@ mod tests {
             added_by: "test".to_string(),
             comment: None,
             created_at: Utc::now(),
+            source: ExceptionSource::User,
         };
 
         // All conditions must match
@@ -674,6 +729,7 @@ mod tests {
             added_by: "test".to_string(),
             comment: None,
             created_at: Utc::now(),
+            source: ExceptionSource::User,
         };
 
         // Should not match even if process has a team_id
@@ -697,6 +753,7 @@ mod tests {
             added_by: "test".to_string(),
             comment: None,
             created_at: Utc::now(),
+            source: ExceptionSource::User,
         };
 
         // Should not match even if process has a signing_id
@@ -733,6 +790,7 @@ mod tests {
             added_by: "test".to_string(),
             comment: None,
             created_at: Utc::now(),
+            source: ExceptionSource::User,
         };
 
         // Process has both team_id and signing_id - should match on signing_id
@@ -769,6 +827,7 @@ mod tests {
             added_by: "test".to_string(),
             comment: None,
             created_at: Utc::now(),
+            source: ExceptionSource::User,
         };
 
         // Platform binary with signing_id but no team_id should NOT match
@@ -806,6 +865,7 @@ mod tests {
             added_by: "test".to_string(),
             comment: None,
             created_at: Utc::now(),
+            source: ExceptionSource::User,
         };
 
         // Platform binary (is_adhoc=false) should NOT match adhoc exception
@@ -843,6 +903,7 @@ mod tests {
             added_by: "test".to_string(),
             comment: None,
             created_at: Utc::now(),
+            source: ExceptionSource::User,
         };
 
         // Adhoc process (has signing_id) should NOT match unsigned exception
@@ -879,6 +940,7 @@ mod tests {
             added_by: "test".to_string(),
             comment: None,
             created_at: Utc::now(),
+            source: ExceptionSource::User,
         };
 
         // Should match any process under /usr/local/bin/
@@ -905,6 +967,7 @@ mod tests {
             added_by: "test".to_string(),
             comment: None,
             created_at: Utc::now(),
+            source: ExceptionSource::User,
         };
 
         let exact_exception = Exception {
@@ -919,6 +982,7 @@ mod tests {
             added_by: "test".to_string(),
             comment: None,
             created_at: Utc::now(),
+            source: ExceptionSource::User,
         };
 
         // Glob should match files under ~/.ssh/
@@ -946,6 +1010,7 @@ mod tests {
             added_by: "test".to_string(),
             comment: None,
             created_at: Utc::now(),
+            source: ExceptionSource::User,
         };
 
         // All match - should pass
@@ -985,6 +1050,7 @@ mod tests {
             added_by: "test".to_string(),
             comment: None,
             created_at: Utc::now(),
+            source: ExceptionSource::User,
         };
 
         // Exact case matches

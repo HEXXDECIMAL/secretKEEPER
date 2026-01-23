@@ -198,6 +198,14 @@ fn main() {
             commands::set_category_enabled,
             commands::resume_process,
             commands::export_violations,
+            commands::get_learning_status,
+            commands::get_learning_recommendations,
+            commands::approve_learning,
+            commands::reject_learning,
+            commands::approve_all_learnings,
+            commands::reject_all_learnings,
+            commands::complete_learning_review,
+            commands::end_learning_early,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

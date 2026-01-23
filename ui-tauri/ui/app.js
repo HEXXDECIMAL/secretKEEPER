@@ -8,6 +8,8 @@ let exceptions = [];
 let categories = [];
 let selectedViolation = null;
 let status = null;
+let learningStatus = null;
+let learningRecommendations = [];
 
 // DOM Elements
 const views = {
@@ -65,6 +67,7 @@ function navigateTo(view) {
     if (view === 'settings') {
         refreshCategories();
         refreshStatus();
+        refreshLearningStatus();
     }
 }
 
@@ -204,6 +207,12 @@ function setupEventListeners() {
         filterViolations(e.target.value);
     });
 
+    // Learning mode buttons
+    document.getElementById('end-learning-btn').addEventListener('click', endLearningEarly);
+    document.getElementById('approve-all-btn').addEventListener('click', approveAllLearnings);
+    document.getElementById('reject-all-btn').addEventListener('click', rejectAllLearnings);
+    document.getElementById('complete-review-btn').addEventListener('click', completeLearningReview);
+
     // Listen for Tauri events
     listen('violation', (event) => {
         handleNewViolation(event.payload);
@@ -254,6 +263,72 @@ async function refreshCategories() {
         // Show empty state
         document.getElementById('categories-list').innerHTML =
             '<div class="empty-state">Could not load categories</div>';
+    }
+}
+
+async function refreshLearningStatus() {
+    try {
+        learningStatus = await invoke('get_learning_status');
+        learningRecommendations = await invoke('get_learning_recommendations');
+        renderLearningStatus();
+        renderLearningRecommendations();
+    } catch (e) {
+        console.error('Failed to get learning status:', e);
+    }
+}
+
+async function approveLearning(id) {
+    try {
+        await invoke('approve_learning', { id });
+        refreshLearningStatus();
+    } catch (e) {
+        console.error('Failed to approve learning:', e);
+    }
+}
+
+async function rejectLearning(id) {
+    try {
+        await invoke('reject_learning', { id });
+        refreshLearningStatus();
+    } catch (e) {
+        console.error('Failed to reject learning:', e);
+    }
+}
+
+async function approveAllLearnings() {
+    try {
+        await invoke('approve_all_learnings');
+        refreshLearningStatus();
+    } catch (e) {
+        console.error('Failed to approve all learnings:', e);
+    }
+}
+
+async function rejectAllLearnings() {
+    try {
+        await invoke('reject_all_learnings');
+        refreshLearningStatus();
+    } catch (e) {
+        console.error('Failed to reject all learnings:', e);
+    }
+}
+
+async function completeLearningReview() {
+    try {
+        await invoke('complete_learning_review');
+        refreshLearningStatus();
+        refreshExceptions(); // Refresh exceptions since approved items are now exceptions
+    } catch (e) {
+        console.error('Failed to complete learning review:', e);
+    }
+}
+
+async function endLearningEarly() {
+    try {
+        await invoke('end_learning_early');
+        refreshLearningStatus();
+    } catch (e) {
+        console.error('Failed to end learning early:', e);
     }
 }
 
@@ -533,6 +608,97 @@ function renderCategories() {
                     <div class="category-patterns">${c.patterns.join(', ')}</div>
                 </div>
             </label>
+        </div>
+    `).join('');
+}
+
+function renderLearningStatus() {
+    if (!learningStatus) return;
+
+    const statusDot = document.getElementById('learning-status-dot');
+    const statusText = document.getElementById('learning-status-text');
+    const timeRow = document.getElementById('learning-time-row');
+    const endRow = document.getElementById('learning-end-row');
+    const reviewSection = document.getElementById('learning-review-section');
+    const infoSection = document.getElementById('learning-info-section');
+
+    // Status colors and text
+    const isLearning = learningStatus.state === 'learning';
+    const isPendingReview = learningStatus.state === 'pending_review';
+    const isComplete = learningStatus.state === 'complete';
+
+    if (isLearning) {
+        statusDot.className = 'status-dot';
+        statusDot.style.background = '#58a6ff';
+        statusText.textContent = 'Learning';
+        timeRow.style.display = 'flex';
+        endRow.style.display = 'block';
+        reviewSection.style.display = 'none';
+        infoSection.style.display = 'block';
+        document.getElementById('learning-hours-remaining').textContent = `${learningStatus.hours_remaining} hours`;
+    } else if (isPendingReview) {
+        statusDot.className = 'status-dot';
+        statusDot.style.background = '#d29922';
+        statusText.textContent = 'Pending Review';
+        timeRow.style.display = 'none';
+        endRow.style.display = 'none';
+        reviewSection.style.display = 'block';
+        infoSection.style.display = 'none';
+        document.getElementById('learning-pending-count').textContent = learningStatus.pending_count;
+        document.getElementById('learning-approved-count').textContent = learningStatus.approved_count;
+        document.getElementById('learning-rejected-count').textContent = learningStatus.rejected_count;
+    } else if (isComplete) {
+        statusDot.className = 'status-dot connected';
+        statusText.textContent = 'Complete';
+        timeRow.style.display = 'none';
+        endRow.style.display = 'none';
+        reviewSection.style.display = 'none';
+        infoSection.style.display = 'block';
+    } else {
+        statusDot.className = 'status-dot';
+        statusDot.style.background = '#6e7681';
+        statusText.textContent = 'Disabled';
+        timeRow.style.display = 'none';
+        endRow.style.display = 'none';
+        reviewSection.style.display = 'none';
+        infoSection.style.display = 'block';
+    }
+}
+
+function renderLearningRecommendations() {
+    const container = document.getElementById('recommendations-list');
+    if (!container) return;
+
+    const pending = learningRecommendations.filter(r => r.status === 'pending');
+
+    if (pending.length === 0) {
+        container.innerHTML = '<div class="empty-state">No recommendations to review</div>';
+        return;
+    }
+
+    container.innerHTML = pending.map(r => `
+        <div class="recommendation-row">
+            <div class="recommendation-info">
+                <div class="recommendation-process">${r.process_name}</div>
+                <div class="recommendation-meta">
+                    <span>${formatCategoryName(r.category_id)}</span>
+                    <span>(${r.observation_count} observations)</span>
+                    ${r.team_id ? `<span class="team-id">${r.team_id}</span>` : ''}
+                </div>
+            </div>
+            <div class="recommendation-actions">
+                <button class="btn btn-sm btn-approve" onclick="approveLearning(${r.id})" title="Approve">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="20 6 9 17 4 12"></polyline>
+                    </svg>
+                </button>
+                <button class="btn btn-sm btn-reject" onclick="rejectLearning(${r.id})" title="Reject">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"></line>
+                        <line x1="6" y1="6" x2="18" y2="18"></line>
+                    </svg>
+                </button>
+            </div>
         </div>
     `).join('');
 }

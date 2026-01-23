@@ -20,6 +20,10 @@ pub struct Config {
     #[serde(default)]
     pub enforcement: EnforcementConfig,
 
+    /// Learning mode configuration.
+    #[serde(default)]
+    pub learning: LearningConfig,
+
     /// Protected file definitions.
     #[serde(default)]
     pub protected_files: Vec<ProtectedFile>,
@@ -43,6 +47,7 @@ impl Default for Config {
             agent: AgentConfig::default(),
             monitoring: MonitoringConfig::default(),
             enforcement: EnforcementConfig::default(),
+            learning: LearningConfig::default(),
             protected_files: default_protected_files(),
             global_exclusions: Vec::new(),
             exceptions: Vec::new(),
@@ -291,6 +296,109 @@ fn default_mode() -> String {
 
 fn default_retention_days() -> u32 {
     30
+}
+
+/// Learning mode configuration.
+///
+/// When enabled, the agent starts in monitor mode and observes which processes
+/// access protected files. After the learning period, it automatically creates
+/// exceptions for processes that have valid code signatures (team_id or platform_binary).
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct LearningConfig {
+    /// Enable learning mode on first run.
+    #[serde(default = "default_learning_enabled")]
+    pub enabled: bool,
+
+    /// Duration of learning period in hours.
+    #[serde(default = "default_learning_hours")]
+    pub duration_hours: u32,
+
+    /// Minimum number of observations before auto-approving.
+    #[serde(default = "default_min_observations")]
+    pub min_observations: u32,
+
+    /// Require valid team_id for auto-approval (recommended).
+    #[serde(default = "default_require_team_id")]
+    pub require_team_id: bool,
+
+    /// Allow platform binaries to be auto-approved.
+    #[serde(default = "default_allow_platform_binary")]
+    pub allow_platform_binary: bool,
+
+    /// Executables that should never be auto-approved (interpreters, shells, etc.).
+    #[serde(default = "default_blocked_executables")]
+    pub blocked_executables: Vec<String>,
+}
+
+impl Default for LearningConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_learning_enabled(),
+            duration_hours: default_learning_hours(),
+            min_observations: default_min_observations(),
+            require_team_id: default_require_team_id(),
+            allow_platform_binary: default_allow_platform_binary(),
+            blocked_executables: default_blocked_executables(),
+        }
+    }
+}
+
+fn default_learning_enabled() -> bool {
+    true
+}
+
+fn default_learning_hours() -> u32 {
+    24
+}
+
+fn default_min_observations() -> u32 {
+    2
+}
+
+fn default_require_team_id() -> bool {
+    true
+}
+
+fn default_allow_platform_binary() -> bool {
+    true
+}
+
+fn default_blocked_executables() -> Vec<String> {
+    vec![
+        // Shells
+        "bash".into(),
+        "zsh".into(),
+        "sh".into(),
+        "fish".into(),
+        "tcsh".into(),
+        "csh".into(),
+        // Interpreters
+        "python".into(),
+        "python3".into(),
+        "python2".into(),
+        "node".into(),
+        "nodejs".into(),
+        "ruby".into(),
+        "perl".into(),
+        "php".into(),
+        // Package managers (run arbitrary code)
+        "npm".into(),
+        "npx".into(),
+        "pip".into(),
+        "pip3".into(),
+        "gem".into(),
+        "bundle".into(),
+        // Scripting tools
+        "osascript".into(),
+        "powershell".into(),
+        "pwsh".into(),
+        // Network tools
+        "curl".into(),
+        "wget".into(),
+        "nc".into(),
+        "ncat".into(),
+        "netcat".into(),
+    ]
 }
 
 /// A protected file definition.
