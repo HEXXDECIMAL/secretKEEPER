@@ -358,78 +358,91 @@ fn get_process_info(pid: u32) -> Option<ProcessTreeEntry> {
 fn get_process_info(pid: u32) -> Option<ProcessTreeEntry> {
     use std::process::Command;
 
-    // Use procstat on FreeBSD
-    let output = Command::new(paths::PROCSTAT)
+    // Use procstat -b to get binary path (single call, reuse output)
+    let procstat_b_output = Command::new(paths::PROCSTAT)
         .args(["-b", &pid.to_string()])
         .output()
         .ok()?;
 
-    if !output.status.success() {
+    if !procstat_b_output.status.success() {
         return None;
     }
 
-    let info = String::from_utf8_lossy(&output.stdout);
-    let lines: Vec<&str> = info.lines().collect();
+    let procstat_b_str = String::from_utf8_lossy(&procstat_b_output.stdout);
+    let lines: Vec<&str> = procstat_b_str.lines().collect();
 
     // Skip header, parse first data line
     if lines.len() < 2 {
         return None;
     }
 
-    let parts: Vec<&str> = lines[1].split_whitespace().collect();
-    if parts.len() < 3 {
-        return None;
-    }
+    // procstat -b format: "  PID  COMM             PATH"
+    // The path may contain spaces, so we need to parse carefully
+    let data_line = lines[1].trim();
 
-    let name = parts.get(2).unwrap_or(&"").to_string();
+    // Split into at most 3 parts: PID, COMM, PATH
+    // PID is numeric, COMM is the next word, PATH is everything after
+    let mut parts_iter = data_line.split_whitespace();
+    let _pid_str = parts_iter.next()?;
+    let comm = parts_iter.next()?;
 
-    // Get more info from ps
+    // The path is the rest of the line after COMM
+    // Find where COMM ends in the original line and take everything after
+    let comm_end = data_line.find(comm)? + comm.len();
+    let path_str = data_line[comm_end..].trim();
+    let path = if path_str.is_empty() {
+        PathBuf::from(comm)
+    } else {
+        PathBuf::from(path_str)
+    };
+
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| comm.to_string());
+
+    // Get more info from ps - use ww for wide output to get full cmdline
     let ps_output = Command::new(paths::PS)
-        .args(["-p", &pid.to_string(), "-o", "ppid=,uid=,args="])
+        .args(["-ww", "-p", &pid.to_string(), "-o", "ppid=,uid=,args="])
         .output()
         .ok()?;
 
     let ps_info = String::from_utf8_lossy(&ps_output.stdout);
-    let ps_parts: Vec<&str> = ps_info.split_whitespace().collect();
+    let ps_trimmed = ps_info.trim();
 
-    let ppid: Option<u32> = ps_parts.first().and_then(|s| s.parse().ok());
-    let uid: Option<u32> = ps_parts.get(1).and_then(|s| s.parse().ok());
-    let cmdline: Option<String> = if ps_parts.len() > 2 {
-        Some(ps_parts[2..].join(" "))
-    } else {
-        None
-    };
+    // Parse: "PPID UID ARGS..."
+    // PPID and UID are numeric, ARGS is everything else (may contain spaces)
+    let mut ps_parts = ps_trimmed.splitn(3, char::is_whitespace);
+    let ppid: Option<u32> = ps_parts.next().and_then(|s| s.trim().parse().ok());
+    let uid: Option<u32> = ps_parts.next().and_then(|s| s.trim().parse().ok());
+    let cmdline: Option<String> = ps_parts
+        .next()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
 
-    // Get CWD using procstat
-    let cwd_output = Command::new(paths::PROCSTAT)
+    // Get CWD using procstat -f
+    let cwd = Command::new(paths::PROCSTAT)
         .args(["-f", &pid.to_string()])
-        .output()
-        .ok();
-
-    let cwd = cwd_output.and_then(|o| {
-        let output_str = String::from_utf8_lossy(&o.stdout);
-        for line in output_str.lines() {
-            if line.contains(" cwd ") {
-                let parts: Vec<&str> = line.split_whitespace().collect();
-                return parts.last().map(|s| s.to_string());
-            }
-        }
-        None
-    });
-
-    // Get path from procstat
-    let path = Command::new(paths::PROCSTAT)
-        .args(["-b", &pid.to_string()])
         .output()
         .ok()
         .and_then(|o| {
+            if !o.status.success() {
+                return None;
+            }
             let output_str = String::from_utf8_lossy(&o.stdout);
-            output_str.lines().nth(1).and_then(|line| {
-                let parts: Vec<&str> = line.split_whitespace().collect();
-                parts.get(2).map(|s| PathBuf::from(s))
-            })
-        })
-        .unwrap_or_else(|| PathBuf::from(&name));
+            for line in output_str.lines() {
+                // Format: "PID COMM FD T V FLAGS REF OFFSET PRO NAME"
+                // cwd line has " cwd " in the FD column area
+                if line.contains(" cwd ") {
+                    // The path is everything after the last whitespace-separated fields
+                    // Look for the path which starts with /
+                    if let Some(slash_pos) = line.rfind(" /") {
+                        return Some(line[slash_pos + 1..].trim().to_string());
+                    }
+                }
+            }
+            None
+        });
 
     // Check if process is stopped using ps
     let is_stopped = Command::new(paths::PS)

@@ -1,5 +1,6 @@
 .PHONY: all build build-release test lint clean install uninstall upgrade verify check ui-macos ui-macos-debug ui-linux run-ui run-agent dev
 .PHONY: version bump-patch bump-minor bump-major app-bundle app-bundle-signed app-bundle-prod install-app dmg dmg-prod notarize out
+.PHONY: package-deb package-rpm package
 
 CARGO := cargo
 
@@ -548,3 +549,32 @@ notarize: dmg-prod
 		--wait
 	@xcrun stapler staple "$(OUT_DIR)/$(BUNDLE_NAME)-$(BUILD_VERSION)-prod.dmg"
 	@echo "Notarization complete"
+
+#==============================================================================
+# LINUX PACKAGING
+#==============================================================================
+
+# Build Debian package (.deb)
+package-deb:
+	@echo "Building Debian package..."
+	./packaging/build-deb.sh
+
+# Build RPM package (.rpm)
+package-rpm:
+	@echo "Building RPM package..."
+	./packaging/build-rpm.sh
+
+# Build packages for current platform
+package:
+ifeq ($(UNAME),Linux)
+	@if [ -f /etc/debian_version ]; then \
+		$(MAKE) package-deb; \
+	elif [ -f /etc/redhat-release ]; then \
+		$(MAKE) package-rpm; \
+	else \
+		echo "Unknown Linux distribution. Use package-deb or package-rpm directly."; \
+	fi
+else
+	@echo "Packaging is only supported on Linux"
+	@exit 1
+endif

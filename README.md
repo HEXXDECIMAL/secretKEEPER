@@ -1,45 +1,138 @@
 # SecretKeeper
 
-SecretKeeper is a macOS security daemon that prevents credential exfiltration by monitoring access to sensitive files such as SSH keys, API tokens, and cloud provider credentials.
+SecretKeeper is a security daemon that prevents credential exfiltration by monitoring access to sensitive files such as SSH keys, API tokens, and cloud provider credentials.
 
 ## Purpose
 
 Protect users from supply-chain attacks and malicious software that attempt to steal secrets stored on disk. When an unauthorized process attempts to read a protected file, SecretKeeper logs the violation and can optionally block the access.
 
-## Endpoint Security Framework Usage
+## Platform Support
 
-SecretKeeper subscribes to `ES_EVENT_TYPE_AUTH_OPEN` events to monitor file access attempts. When an open event targets a protected path pattern (e.g., `~/.ssh/id_*`, `~/.aws/credentials`), the agent evaluates the requesting process against a whitelist of allowed applications.
-
-**Events subscribed:**
-- `ES_EVENT_TYPE_AUTH_OPEN` — intercept file open attempts on protected paths
-
-**Decision logic:**
-- Allow if the process matches a configured rule (path, code signature, team ID)
-- Deny and log if no rule matches
+| Platform | Mechanism | Blocking | Minimum Version |
+|----------|-----------|----------|-----------------|
+| macOS | Endpoint Security Framework | True blocking | 13.0+ |
+| Linux | fanotify (FAN_OPEN_PERM) | True blocking | Kernel 5.1+ |
+| FreeBSD | DTrace | Best-effort | 10+ |
 
 ## Architecture
 
 ```
 secretkeeper-agent (privileged daemon)
-    ├── Endpoint Security client for file access events
-    ├── Rule engine with code signature verification
+    ├── File access monitor (ESF/fanotify/DTrace)
+    ├── Rule engine with process verification
     └── SQLite database for violation logging
 
-SecretKeeper.app (unprivileged UI)
+SecretKeeper UI (unprivileged)
     └── Displays violations and manages exceptions via Unix socket IPC
 ```
 
 ## Protected File Categories
 
-- SSH keys and known hosts
+- SSH keys and certificates
 - GPG/PGP private keys
 - AWS, GCP, Azure credentials
 - Kubernetes and Docker configs
 - Package manager tokens (npm, PyPI, RubyGems)
+- Browser password stores
+- Password manager databases
 - Shell history files
+
+## Quick Start
+
+### macOS
+
+```bash
+# Using Homebrew (coming soon)
+brew install secretkeeper
+
+# Or build from source
+make build-release
+sudo make install-macos
+```
+
+### Linux
+
+```bash
+# Debian/Ubuntu
+wget https://github.com/secretkeeper/secretkeeper/releases/latest/download/secretkeeper_amd64.deb
+sudo dpkg -i secretkeeper_amd64.deb
+
+# RHEL/Fedora
+wget https://github.com/secretkeeper/secretkeeper/releases/latest/download/secretkeeper.x86_64.rpm
+sudo dnf install ./secretkeeper.x86_64.rpm
+
+# Or build from source
+make build-release
+sudo make install-linux
+```
+
+### FreeBSD
+
+```bash
+make build-release
+sudo make install-freebsd
+```
 
 ## Requirements
 
+### macOS
 - macOS 13.0+
-- Endpoint Security entitlement
+- Endpoint Security entitlement (for production builds)
 - Full Disk Access (for monitoring user directories)
+
+### Linux
+- Kernel 5.1+ (for FAN_OPEN_PERM support)
+- CAP_SYS_ADMIN capability (configured via systemd)
+- systemd for service management
+
+### FreeBSD
+- FreeBSD 10+
+- DTrace enabled
+
+## Documentation
+
+- [Linux Installation Guide](docs/linux-installation.md)
+- [Linux Configuration Reference](docs/linux-config-reference.md)
+
+## How It Works
+
+### macOS (Endpoint Security Framework)
+
+SecretKeeper subscribes to `ES_EVENT_TYPE_AUTH_OPEN` events to monitor file access attempts. When an open event targets a protected path pattern (e.g., `~/.ssh/id_*`, `~/.aws/credentials`), the agent evaluates the requesting process against a whitelist of allowed applications.
+
+**Decision logic:**
+- Allow if the process matches a configured rule (path, code signature, team ID)
+- Deny and log if no rule matches
+
+### Linux (fanotify)
+
+SecretKeeper uses the fanotify API with `FAN_OPEN_PERM` permission events for true pre-access blocking. When a process attempts to open a protected file, the kernel blocks the operation until SecretKeeper responds with allow or deny.
+
+**Decision logic:**
+- Allow if the process matches a configured rule (path, UID, EUID)
+- Deny and log if no rule matches
+- Optionally SIGSTOP violating processes
+
+### FreeBSD (DTrace)
+
+SecretKeeper uses DTrace to monitor file access system calls. While it cannot block access before it occurs, it can detect violations and suspend offending processes.
+
+## Building
+
+```bash
+# Build all components
+make build-release
+
+# Build agent only
+make build-agent
+
+# Run tests
+make test
+
+# Run linter
+make lint
+```
+
+## License
+
+MIT

@@ -1,0 +1,8 @@
+secretkeeper (0.1.0-1) unstable; urgency=medium
+
+  * Initial release
+  * Linux support via fanotify with pre-access blocking
+  * Protection for SSH keys, GPG keys, cloud credentials, and more
+  * systemd service integration with security hardening
+
+ -- SecretKeeper Team <team@secretkeeper.dev>  Thu, 23 Jan 2025 00:00:00 +0000

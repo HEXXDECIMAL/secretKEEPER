@@ -1,0 +1,27 @@
+Source: secretkeeper
+Section: admin
+Priority: optional
+Maintainer: SecretKeeper Team <team@secretkeeper.dev>
+Build-Depends: debhelper-compat (= 13)
+Standards-Version: 4.6.2
+Homepage: https://github.com/secretkeeper/secretkeeper
+Vcs-Git: https://github.com/secretkeeper/secretkeeper.git
+Vcs-Browser: https://github.com/secretkeeper/secretkeeper
+Rules-Requires-Root: no
+
+Package: secretkeeper
+Architecture: amd64
+Depends: ${misc:Depends}, ${shlibs:Depends}, systemd
+Pre-Depends: adduser
+Description: Secret exfiltration prevention daemon
+ SecretKeeper monitors and protects sensitive files like SSH keys,
+ API tokens, and cloud credentials from unauthorized access.
+ .
+ Features:
+  - Kernel-level file access monitoring using fanotify
+  - True pre-access blocking (deny unauthorized access before it happens)
+  - Protection for 40+ credential categories
+  - Rule-based whitelist system
+  - Process tree tracking for violation attribution
+ .
+ Requires CAP_SYS_ADMIN capability and Linux kernel 5.1+.

@@ -26,10 +26,12 @@ use crate::error::{Error, Result};
 use crate::process::{get_home_for_uid, ProcessContext};
 use std::path::PathBuf;
 use std::process::Stdio;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
+use tokio::sync::Notify;
 
 /// Path to dtrace binary
 const DTRACE_PATH: &str = "/usr/sbin/dtrace";
@@ -39,15 +41,16 @@ const DTRACE_PATH: &str = "/usr/sbin/dtrace";
 /// Uses | as delimiter since it's rare in paths.
 /// Filters out our own PID to avoid infinite loops.
 /// Note: openat has path in arg1, open has path in arg0.
+/// Uses __SECRETKEEPER_PID__ as placeholder to avoid accidental substitution.
 const DTRACE_SCRIPT: &str = r#"
 syscall::openat:entry
-/pid != $1 && arg1 != 0/
+/pid != __SECRETKEEPER_PID__ && arg1 != 0/
 {
     printf("%d|%d|%d|%s\n", pid, ppid, uid, copyinstr(arg1));
 }
 
 syscall::open:entry
-/pid != $1 && arg0 != 0/
+/pid != __SECRETKEEPER_PID__ && arg0 != 0/
 {
     printf("%d|%d|%d|%s\n", pid, ppid, uid, copyinstr(arg0));
 }
@@ -56,6 +59,10 @@ syscall::open:entry
 pub struct DtraceMonitor {
     context: Arc<MonitorContext>,
     child: Option<Child>,
+    /// Signal to stop background tasks
+    shutdown: Arc<AtomicBool>,
+    /// Notify background tasks to check shutdown
+    shutdown_notify: Arc<Notify>,
 }
 
 impl DtraceMonitor {
@@ -63,6 +70,8 @@ impl DtraceMonitor {
         Self {
             context,
             child: None,
+            shutdown: Arc::new(AtomicBool::new(false)),
+            shutdown_notify: Arc::new(Notify::new()),
         }
     }
 
@@ -79,7 +88,7 @@ impl DtraceMonitor {
     async fn spawn_dtrace(&self) -> Result<Child> {
         let our_pid = std::process::id();
 
-        let script = DTRACE_SCRIPT.replace("$1", &our_pid.to_string());
+        let script = DTRACE_SCRIPT.replace("__SECRETKEEPER_PID__", &our_pid.to_string());
 
         let child = Command::new(DTRACE_PATH)
             .args([
@@ -98,7 +107,7 @@ impl DtraceMonitor {
 
     /// Parse a line of dtrace output into file path and process context.
     /// Format: pid|ppid|uid|path
-    fn parse_dtrace_line(&self, line: &str) -> Option<(String, ProcessContext)> {
+    async fn parse_dtrace_line(&self, line: &str) -> Option<(String, ProcessContext)> {
         let line = line.trim();
         if line.is_empty() {
             return None;
@@ -125,9 +134,10 @@ impl DtraceMonitor {
             return None;
         }
 
-        // Get process executable path
+        // Get process executable path (async to avoid blocking)
         let exe_path = self
             .get_process_exe(pid)
+            .await
             .unwrap_or_else(|| PathBuf::from("unknown"));
 
         // Build process context
@@ -143,12 +153,13 @@ impl DtraceMonitor {
         Some((normalized_path, context))
     }
 
-    /// Get the executable path for a process.
-    fn get_process_exe(&self, pid: u32) -> Option<PathBuf> {
-        // Use procstat to get the executable path
-        let output = std::process::Command::new("/usr/bin/procstat")
+    /// Get the executable path for a process (async-friendly).
+    async fn get_process_exe(&self, pid: u32) -> Option<PathBuf> {
+        // Use tokio's async Command to avoid blocking the runtime
+        let output = Command::new("/usr/bin/procstat")
             .args(["-b", &pid.to_string()])
             .output()
+            .await
             .ok()?;
 
         if !output.status.success() {
@@ -158,10 +169,28 @@ impl DtraceMonitor {
         let output_str = String::from_utf8_lossy(&output.stdout);
         // Skip header line, parse second line
         let line = output_str.lines().nth(1)?;
-        let parts: Vec<&str> = line.split_whitespace().collect();
 
-        // Format: PID COMM PATH
-        parts.get(2).map(|s| PathBuf::from(*s))
+        // Format: PID COMM PATH (but PATH may contain spaces)
+        // procstat -b output: "  PID  COMM             PATH"
+        // We need to find the path which starts after the COMM field
+        let trimmed = line.trim();
+        let mut parts = trimmed.splitn(3, char::is_whitespace);
+        let _pid = parts.next()?; // Skip PID
+                                  // Skip whitespace and COMM - find the path (last substantial field)
+                                  // Actually procstat format is: PID<whitespace>COMM<whitespace>PATH
+                                  // The PATH is the rest after COMM
+        let rest: String = parts.collect::<Vec<_>>().join(" ");
+        let rest = rest.trim_start();
+
+        // COMM is the first word, PATH is everything after
+        if let Some(space_idx) = rest.find(char::is_whitespace) {
+            let path = rest[space_idx..].trim();
+            if !path.is_empty() {
+                return Some(PathBuf::from(path));
+            }
+        }
+
+        None
     }
 
     /// Normalize a file path, converting /home/user/... to ~/...
@@ -202,11 +231,14 @@ impl super::Monitor for DtraceMonitor {
             let mut mode = self.context.mode.write().await;
             if mode.as_str() == "block" {
                 *mode = "best-effort".to_string();
-                tracing::info!(
-                    "Mode: best-effort (DTrace can observe and suspend, not pre-emptively block)"
+                tracing::warn!(
+                    "Mode changed to 'best-effort': DTrace can observe and suspend, but cannot pre-emptively block file access"
                 );
             }
         }
+
+        // Reset shutdown state
+        self.shutdown.store(false, Ordering::SeqCst);
 
         // Spawn dtrace with restart logic
         let mut restart_delay = Duration::from_millis(500);
@@ -254,20 +286,38 @@ impl super::Monitor for DtraceMonitor {
                 }
             };
 
-            // Log stderr in background
+            // Log stderr in background with shutdown support
             if let Some(stderr) = child.stderr.take() {
+                let shutdown = self.shutdown.clone();
+                let shutdown_notify = self.shutdown_notify.clone();
                 tokio::spawn(async move {
                     let reader = BufReader::new(stderr);
                     let mut lines = reader.lines();
-                    while let Ok(Some(line)) = lines.next_line().await {
-                        // DTrace privilege errors
-                        if line.contains("permission denied")
-                            || line.contains("DTrace requires additional privileges")
-                        {
-                            tracing::error!("DTrace permission error: {}", line);
-                            tracing::error!("Ensure the agent is running as root");
-                        } else {
-                            tracing::warn!("dtrace stderr: {}", line);
+                    loop {
+                        tokio::select! {
+                            _ = shutdown_notify.notified() => {
+                                if shutdown.load(Ordering::SeqCst) {
+                                    tracing::debug!("Stderr logging task shutting down");
+                                    break;
+                                }
+                            }
+                            result = lines.next_line() => {
+                                match result {
+                                    Ok(Some(line)) => {
+                                        // DTrace privilege errors
+                                        if line.contains("permission denied")
+                                            || line.contains("DTrace requires additional privileges")
+                                        {
+                                            tracing::error!("DTrace permission error: {}", line);
+                                            tracing::error!("Ensure the agent is running as root");
+                                        } else {
+                                            tracing::warn!("dtrace stderr: {}", line);
+                                        }
+                                    }
+                                    Ok(None) => break, // EOF
+                                    Err(_) => break,
+                                }
+                            }
                         }
                     }
                 });
@@ -275,29 +325,40 @@ impl super::Monitor for DtraceMonitor {
 
             self.child = Some(child);
 
-            // Spawn periodic status logging
+            // Spawn periodic status logging with shutdown support
             let stats_context = self.context.clone();
+            let shutdown = self.shutdown.clone();
+            let shutdown_notify = self.shutdown_notify.clone();
             tokio::spawn(async move {
                 let mut interval = tokio::time::interval(Duration::from_secs(60));
                 loop {
-                    interval.tick().await;
-                    let snapshot = stats_context.stats.take();
-                    if snapshot.events_received > 0
-                        || snapshot.protected_checks > 0
-                        || snapshot.violations > 0
-                    {
-                        tracing::info!(
-                            "Status [dtrace]: {} events, {} protected file checks, {} allowed, {} violations, {} rate-limited",
-                            snapshot.events_received,
-                            snapshot.protected_checks,
-                            snapshot.allowed,
-                            snapshot.violations,
-                            snapshot.rate_limited
-                        );
-                    } else {
-                        tracing::info!(
-                            "Status [dtrace]: idle (no file access events in last minute)"
-                        );
+                    tokio::select! {
+                        _ = shutdown_notify.notified() => {
+                            if shutdown.load(Ordering::SeqCst) {
+                                tracing::debug!("Stats logging task shutting down");
+                                break;
+                            }
+                        }
+                        _ = interval.tick() => {
+                            let snapshot = stats_context.stats.take();
+                            if snapshot.events_received > 0
+                                || snapshot.protected_checks > 0
+                                || snapshot.violations > 0
+                            {
+                                tracing::info!(
+                                    "Status [dtrace]: {} events, {} protected file checks, {} allowed, {} violations, {} rate-limited",
+                                    snapshot.events_received,
+                                    snapshot.protected_checks,
+                                    snapshot.allowed,
+                                    snapshot.violations,
+                                    snapshot.rate_limited
+                                );
+                            } else {
+                                tracing::debug!(
+                                    "Status [dtrace]: idle (no file access events in last minute)"
+                                );
+                            }
+                        }
                     }
                 }
             });
@@ -310,6 +371,12 @@ impl super::Monitor for DtraceMonitor {
 
             let mut event_count: u64 = 0;
             while let Ok(Some(line)) = lines.next_line().await {
+                // Check for shutdown
+                if self.shutdown.load(Ordering::SeqCst) {
+                    tracing::info!("Shutdown requested, stopping event processing");
+                    break;
+                }
+
                 event_count += 1;
 
                 // Log first few events and then periodically for debugging
@@ -317,7 +384,7 @@ impl super::Monitor for DtraceMonitor {
                     tracing::debug!("dtrace event #{}: {}", event_count, line);
                 }
 
-                if let Some((file_path, context)) = self.parse_dtrace_line(&line) {
+                if let Some((file_path, context)) = self.parse_dtrace_line(&line).await {
                     // Debug logging for SSH file access
                     if file_path.contains(".ssh") {
                         tracing::info!(
@@ -329,36 +396,84 @@ impl super::Monitor for DtraceMonitor {
                         );
                     }
 
-                    // Process the access
-                    if let Some(violation) = self.context.process_access(&file_path, &context).await
-                    {
-                        tracing::warn!(
-                            "VIOLATION [{}]: {} accessed {} ({})",
-                            violation.id,
-                            violation.process_path,
-                            violation.file_path,
-                            violation.action
-                        );
+                    // Process the access with a timeout to avoid blocking indefinitely
+                    let process_future = self.context.process_access(&file_path, &context);
+                    match tokio::time::timeout(Duration::from_secs(5), process_future).await {
+                        Ok(Some(violation)) => {
+                            tracing::warn!(
+                                "VIOLATION [{}]: {} accessed {} ({})",
+                                violation.id,
+                                violation.process_path,
+                                violation.file_path,
+                                violation.action
+                            );
+                        }
+                        Ok(None) => {
+                            // No violation, normal case
+                        }
+                        Err(_) => {
+                            tracing::warn!(
+                                "Timeout processing access to {} by pid {:?}, skipping",
+                                file_path,
+                                context.pid
+                            );
+                        }
                     }
                 }
             }
 
-            // dtrace exited - decide whether to restart
-            tracing::warn!("dtrace process exited, will restart...");
+            // Check if we should exit or restart
+            if self.shutdown.load(Ordering::SeqCst) {
+                tracing::info!("Shutdown requested, not restarting dtrace");
+                // Wait for child to fully exit
+                if let Some(mut child) = self.child.take() {
+                    let _ = child.wait().await;
+                }
+                break;
+            }
+
+            // dtrace exited unexpectedly - restart
+            tracing::warn!("dtrace process exited unexpectedly, will restart...");
+
+            // Wait for child to fully exit to avoid zombies
+            if let Some(mut child) = self.child.take() {
+                let _ = child.wait().await;
+            }
 
             // Wait before restart with backoff
             tokio::time::sleep(restart_delay).await;
             restart_delay = (restart_delay * 2).min(MAX_RESTART_DELAY);
         }
+
+        Ok(())
     }
 
     async fn stop(&mut self) -> Result<()> {
+        tracing::info!("Stopping dtrace monitor");
+
+        // Signal shutdown to all background tasks
+        self.shutdown.store(true, Ordering::SeqCst);
+        self.shutdown_notify.notify_waiters();
+
+        // Kill and wait for dtrace child process
         if let Some(mut child) = self.child.take() {
-            tracing::info!("Stopping dtrace monitor");
             if let Err(e) = child.kill().await {
                 tracing::warn!("Failed to kill dtrace process: {}", e);
             }
+            // Wait to reap the child and avoid zombie
+            match tokio::time::timeout(Duration::from_secs(5), child.wait()).await {
+                Ok(Ok(status)) => {
+                    tracing::debug!("dtrace process exited with status: {}", status);
+                }
+                Ok(Err(e)) => {
+                    tracing::warn!("Error waiting for dtrace process: {}", e);
+                }
+                Err(_) => {
+                    tracing::warn!("Timeout waiting for dtrace process to exit");
+                }
+            }
         }
+
         Ok(())
     }
 }
@@ -398,11 +513,11 @@ mod tests {
         DtraceMonitor::new(context)
     }
 
-    #[test]
-    fn test_parse_dtrace_line_valid() {
+    #[tokio::test]
+    async fn test_parse_dtrace_line_valid() {
         let monitor = create_test_monitor();
 
-        let result = monitor.parse_dtrace_line("1234|1|0|/etc/passwd");
+        let result = monitor.parse_dtrace_line("1234|1|0|/etc/passwd").await;
         assert!(result.is_some());
 
         let (path, context) = result.unwrap();
@@ -412,73 +527,82 @@ mod tests {
         assert_eq!(context.uid, Some(0));
     }
 
-    #[test]
-    fn test_parse_dtrace_line_with_spaces() {
+    #[tokio::test]
+    async fn test_parse_dtrace_line_with_spaces() {
         let monitor = create_test_monitor();
 
-        let result = monitor.parse_dtrace_line("5678|100|501|/home/user/my file.txt");
+        let result = monitor
+            .parse_dtrace_line("5678|100|501|/home/user/my file.txt")
+            .await;
         assert!(result.is_some());
 
         let (path, _context) = result.unwrap();
         assert_eq!(path, "/home/user/my file.txt");
     }
 
-    #[test]
-    fn test_parse_dtrace_line_with_pipe_in_path() {
+    #[tokio::test]
+    async fn test_parse_dtrace_line_with_pipe_in_path() {
         let monitor = create_test_monitor();
 
         // Path contains a pipe character - should still parse correctly
         // since we use splitn(4, ...) to limit splits
-        let result = monitor.parse_dtrace_line("1234|1|0|/tmp/file|with|pipes.txt");
+        let result = monitor
+            .parse_dtrace_line("1234|1|0|/tmp/file|with|pipes.txt")
+            .await;
         assert!(result.is_some());
 
         let (path, _context) = result.unwrap();
         assert_eq!(path, "/tmp/file|with|pipes.txt");
     }
 
-    #[test]
-    fn test_parse_dtrace_line_empty() {
+    #[tokio::test]
+    async fn test_parse_dtrace_line_empty() {
         let monitor = create_test_monitor();
-        assert!(monitor.parse_dtrace_line("").is_none());
-        assert!(monitor.parse_dtrace_line("   ").is_none());
+        assert!(monitor.parse_dtrace_line("").await.is_none());
+        assert!(monitor.parse_dtrace_line("   ").await.is_none());
     }
 
-    #[test]
-    fn test_parse_dtrace_line_malformed() {
+    #[tokio::test]
+    async fn test_parse_dtrace_line_malformed() {
         let monitor = create_test_monitor();
 
         // Missing fields
-        assert!(monitor.parse_dtrace_line("1234").is_none());
-        assert!(monitor.parse_dtrace_line("1234|1").is_none());
-        assert!(monitor.parse_dtrace_line("1234|1|0").is_none());
+        assert!(monitor.parse_dtrace_line("1234").await.is_none());
+        assert!(monitor.parse_dtrace_line("1234|1").await.is_none());
+        assert!(monitor.parse_dtrace_line("1234|1|0").await.is_none());
     }
 
-    #[test]
-    fn test_parse_dtrace_line_invalid_numbers() {
+    #[tokio::test]
+    async fn test_parse_dtrace_line_invalid_numbers() {
         let monitor = create_test_monitor();
 
-        assert!(monitor.parse_dtrace_line("abc|1|0|/etc/passwd").is_none());
+        assert!(monitor
+            .parse_dtrace_line("abc|1|0|/etc/passwd")
+            .await
+            .is_none());
         assert!(monitor
             .parse_dtrace_line("1234|xyz|0|/etc/passwd")
+            .await
             .is_none());
         assert!(monitor
             .parse_dtrace_line("1234|1|bad|/etc/passwd")
+            .await
             .is_none());
     }
 
-    #[test]
-    fn test_parse_dtrace_line_directory_skipped() {
+    #[tokio::test]
+    async fn test_parse_dtrace_line_directory_skipped() {
         let monitor = create_test_monitor();
 
-        let result = monitor.parse_dtrace_line("1234|1|0|/home/user/");
+        let result = monitor.parse_dtrace_line("1234|1|0|/home/user/").await;
         assert!(result.is_none()); // Directories should be skipped
     }
 
-    #[test]
-    fn test_parse_dtrace_line_empty_path() {
+    #[tokio::test]
+    async fn test_parse_dtrace_line_empty_path() {
         let monitor = create_test_monitor();
 
-        let result = monitor.parse_dtrace_line("1234|1|0|");
+        let result = monitor.parse_dtrace_line("1234|1|0|").await;
         assert!(result.is_none());
     }
 
@@ -526,22 +650,25 @@ mod tests {
     fn test_dtrace_monitor_new() {
         let monitor = create_test_monitor();
         assert!(monitor.child.is_none());
+        assert!(!monitor.shutdown.load(Ordering::SeqCst));
     }
 
     #[test]
     fn test_dtrace_script_substitution() {
         let our_pid = 12345u32;
-        let script = DTRACE_SCRIPT.replace("$1", &our_pid.to_string());
+        let script = DTRACE_SCRIPT.replace("__SECRETKEEPER_PID__", &our_pid.to_string());
 
         assert!(script.contains("pid != 12345"));
-        assert!(!script.contains("$1"));
+        assert!(!script.contains("__SECRETKEEPER_PID__"));
     }
 
-    #[test]
-    fn test_parse_dtrace_line_ssh_key() {
+    #[tokio::test]
+    async fn test_parse_dtrace_line_ssh_key() {
         let monitor = create_test_monitor();
 
-        let result = monitor.parse_dtrace_line("9999|1000|501|/home/user/.ssh/id_rsa");
+        let result = monitor
+            .parse_dtrace_line("9999|1000|501|/home/user/.ssh/id_rsa")
+            .await;
         assert!(result.is_some());
 
         let (path, context) = result.unwrap();
@@ -549,35 +676,41 @@ mod tests {
         assert_eq!(context.pid, Some(9999));
     }
 
-    #[test]
-    fn test_parse_dtrace_line_aws_credentials() {
+    #[tokio::test]
+    async fn test_parse_dtrace_line_aws_credentials() {
         let monitor = create_test_monitor();
 
-        let result = monitor.parse_dtrace_line("9999|1000|501|/home/user/.aws/credentials");
+        let result = monitor
+            .parse_dtrace_line("9999|1000|501|/home/user/.aws/credentials")
+            .await;
         assert!(result.is_some());
 
         let (path, _context) = result.unwrap();
         assert!(path.contains(".aws/credentials"));
     }
 
-    #[test]
-    fn test_parse_dtrace_line_large_pid() {
+    #[tokio::test]
+    async fn test_parse_dtrace_line_large_pid() {
         let monitor = create_test_monitor();
 
         // Large but valid PIDs
-        let result = monitor.parse_dtrace_line("4294967295|1|0|/etc/passwd");
+        let result = monitor
+            .parse_dtrace_line("4294967295|1|0|/etc/passwd")
+            .await;
         assert!(result.is_some());
 
         let (_path, context) = result.unwrap();
         assert_eq!(context.pid, Some(4294967295));
     }
 
-    #[test]
-    fn test_parse_dtrace_line_whitespace_handling() {
+    #[tokio::test]
+    async fn test_parse_dtrace_line_whitespace_handling() {
         let monitor = create_test_monitor();
 
         // Leading/trailing whitespace should be trimmed
-        let result = monitor.parse_dtrace_line("  1234|1|0|/etc/passwd  \n");
+        let result = monitor
+            .parse_dtrace_line("  1234|1|0|/etc/passwd  \n")
+            .await;
         assert!(result.is_some());
 
         let (path, _context) = result.unwrap();

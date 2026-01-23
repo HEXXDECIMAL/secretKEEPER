@@ -1,0 +1,51 @@
+#!/bin/bash
+set -e
+
+case "$1" in
+    configure)
+        # Create secretkeeper system user if it doesn't exist
+        if ! getent passwd secretkeeper > /dev/null 2>&1; then
+            adduser --system --group --no-create-home \
+                --home /var/lib/secretkeeper \
+                --gecos "SecretKeeper service account" \
+                secretkeeper
+        fi
+
+        # Set ownership and permissions on data directory
+        if [ -d /var/lib/secretkeeper ]; then
+            chown root:root /var/lib/secretkeeper
+            chmod 750 /var/lib/secretkeeper
+        fi
+
+        # Set permissions on config directory
+        if [ -d /etc/secretkeeper ]; then
+            chmod 755 /etc/secretkeeper
+            chmod 644 /etc/secretkeeper/config.toml
+        fi
+
+        # Reload systemd and enable service
+        systemctl daemon-reload
+        systemctl enable secretkeeper.service
+
+        # Start service if not already running
+        if ! systemctl is-active --quiet secretkeeper.service; then
+            systemctl start secretkeeper.service || true
+        fi
+
+        echo "SecretKeeper installed successfully."
+        echo "Check status: systemctl status secretkeeper"
+        echo "View logs: journalctl -u secretkeeper -f"
+        ;;
+
+    abort-upgrade|abort-remove|abort-deconfigure)
+        ;;
+
+    *)
+        echo "postinst called with unknown argument: $1" >&2
+        exit 1
+        ;;
+esac
+
+#DEBHELPER#
+
+exit 0

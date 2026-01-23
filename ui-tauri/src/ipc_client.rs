@@ -1,10 +1,23 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::io;
+use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
+use tokio::time::timeout;
 
-const SOCKET_PATH: &str = "/var/run/secretkeeper.sock";
+/// Connection timeout for initial socket connection
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Read timeout for waiting on responses
+const READ_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Socket paths to try in order (first one that exists wins)
+const SOCKET_PATHS: &[&str] = &[
+    "/var/run/secretkeeper.sock",
+    "/var/run/secretkeeper/secretkeeper.sock",
+    "/tmp/secretkeeper.sock",
+];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ViolationEvent {
@@ -215,21 +228,64 @@ fn unexpected_response() -> io::Error {
 
 pub struct IpcClient {
     stream: Option<BufReader<UnixStream>>,
+    socket_path: Option<String>,
 }
 
 impl IpcClient {
     pub fn new() -> Self {
-        Self { stream: None }
+        Self {
+            stream: None,
+            socket_path: None,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn is_connected(&self) -> bool {
+        self.stream.is_some()
     }
 
     pub async fn connect(&mut self) -> io::Result<()> {
-        let stream = UnixStream::connect(SOCKET_PATH).await?;
-        self.stream = Some(BufReader::new(stream));
-        Ok(())
+        // Try each socket path in order
+        let mut last_err = io::Error::new(io::ErrorKind::NotFound, "No socket paths configured");
+
+        for path in SOCKET_PATHS {
+            // Check if socket exists before trying to connect
+            if !std::path::Path::new(path).exists() {
+                continue;
+            }
+
+            match timeout(CONNECT_TIMEOUT, UnixStream::connect(path)).await {
+                Ok(Ok(stream)) => {
+                    self.stream = Some(BufReader::new(stream));
+                    self.socket_path = Some(path.to_string());
+                    return Ok(());
+                }
+                Ok(Err(e)) => {
+                    last_err = e;
+                    continue;
+                }
+                Err(_) => {
+                    last_err = io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        format!("Connection to {} timed out", path),
+                    );
+                    continue;
+                }
+            }
+        }
+
+        Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!(
+                "Could not connect to agent. Tried paths: {:?}. Last error: {}",
+                SOCKET_PATHS, last_err
+            ),
+        ))
     }
 
     pub async fn disconnect(&mut self) {
         self.stream = None;
+        self.socket_path = None;
     }
 
     async fn send(&mut self, request: &Request) -> io::Result<Response> {
@@ -244,7 +300,16 @@ impl IpcClient {
         stream.get_mut().flush().await?;
 
         let mut line = String::new();
-        stream.read_line(&mut line).await?;
+        match timeout(READ_TIMEOUT, stream.read_line(&mut line)).await {
+            Ok(Ok(_)) => {}
+            Ok(Err(e)) => return Err(e),
+            Err(_) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "Timeout waiting for response from agent",
+                ))
+            }
+        }
 
         serde_json::from_str(&line).map_err(|e| {
             io::Error::new(
@@ -262,15 +327,38 @@ impl IpcClient {
         }
     }
 
+    /// Read an event with a timeout. Returns None on timeout (not an error).
+    /// This allows periodic reconnection checks.
+    #[allow(dead_code)]
     pub async fn read_event(&mut self) -> io::Result<Option<ViolationEvent>> {
+        self.read_event_timeout(READ_TIMEOUT).await
+    }
+
+    /// Read an event with a custom timeout
+    pub async fn read_event_timeout(
+        &mut self,
+        read_timeout: Duration,
+    ) -> io::Result<Option<ViolationEvent>> {
         let stream = self
             .stream
             .as_mut()
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotConnected, "Not connected"))?;
 
         let mut line = String::new();
-        if stream.read_line(&mut line).await? == 0 {
-            return Ok(None);
+        match timeout(read_timeout, stream.read_line(&mut line)).await {
+            Ok(Ok(0)) => {
+                // Connection closed
+                return Err(io::Error::new(
+                    io::ErrorKind::ConnectionReset,
+                    "Connection closed by agent",
+                ));
+            }
+            Ok(Ok(_)) => {}
+            Ok(Err(e)) => return Err(e),
+            Err(_) => {
+                // Timeout - not an error, just no events
+                return Ok(None);
+            }
         }
 
         let response: Response = serde_json::from_str(&line)
@@ -279,6 +367,15 @@ impl IpcClient {
         match response {
             Response::Event(event) => Ok(Some(event)),
             _ => Ok(None),
+        }
+    }
+
+    /// Send a ping to check if connection is alive
+    pub async fn ping(&mut self) -> io::Result<()> {
+        match self.send(&Request::Ping).await? {
+            Response::Pong => Ok(()),
+            Response::Error { message } => Err(io::Error::other(message)),
+            _ => Err(unexpected_response()),
         }
     }
 

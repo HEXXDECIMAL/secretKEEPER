@@ -15,6 +15,12 @@ use tokio::sync::Mutex;
 
 use ipc_client::IpcClient;
 
+fn update_tray_status(app_handle: &tauri::AppHandle, status: &str) {
+    if let Some(tray) = app_handle.tray_handle().try_get_item("status") {
+        let _ = tray.set_title(status);
+    }
+}
+
 fn main() {
     let tray_menu = SystemTrayMenu::new()
         .add_item(CustomMenuItem::new("status", "Status: Connecting...").disabled())
@@ -32,48 +38,101 @@ fn main() {
             let ipc_client = Arc::new(Mutex::new(IpcClient::new()));
             app.manage(ipc_client.clone());
 
-            // Start IPC connection in background
+            // Start IPC connection in background with reconnection support
             let app_handle = app.handle();
             tauri::async_runtime::spawn(async move {
-                let client = app_handle.state::<Arc<Mutex<IpcClient>>>();
-                let mut client = client.lock().await;
+                let client_state = app_handle.state::<Arc<Mutex<IpcClient>>>();
+                let reconnect_delay = std::time::Duration::from_secs(5);
+                let event_timeout = std::time::Duration::from_secs(10);
 
-                if let Err(e) = client.connect().await {
-                    eprintln!("Failed to connect to agent: {}", e);
-                    return;
-                }
-
-                // Update tray status
-                if let Some(tray) = app_handle.tray_handle().try_get_item("status") {
-                    let _ = tray.set_title("Status: Connected");
-                }
-
-                // Subscribe to events
-                if let Err(e) = client.subscribe(None).await {
-                    eprintln!("Failed to subscribe: {}", e);
-                    return;
-                }
-
-                // Event loop
                 loop {
-                    match client.read_event().await {
-                        Ok(Some(event)) => {
-                            // Emit event to frontend
-                            let _ = app_handle.emit_all("violation", &event);
+                    // Update tray to show connecting status
+                    update_tray_status(&app_handle, "Status: Connecting...");
 
-                            // Show alert window
-                            if let Some(window) = app_handle.get_window("alert") {
-                                let _ = window.emit("violation", &event);
-                                let _ = window.show();
-                                let _ = window.set_focus();
+                    // Try to connect (release lock between attempts)
+                    let connected = {
+                        let mut client = client_state.lock().await;
+                        match client.connect().await {
+                            Ok(()) => true,
+                            Err(e) => {
+                                eprintln!("Failed to connect to agent: {}", e);
+                                false
                             }
                         }
-                        Ok(None) => continue,
-                        Err(e) => {
-                            eprintln!("IPC error: {}", e);
-                            break;
+                    };
+
+                    if !connected {
+                        update_tray_status(&app_handle, "Status: Disconnected");
+                        tokio::time::sleep(reconnect_delay).await;
+                        continue;
+                    }
+
+                    // Subscribe to events
+                    let subscribed = {
+                        let mut client = client_state.lock().await;
+                        match client.subscribe(None).await {
+                            Ok(()) => true,
+                            Err(e) => {
+                                eprintln!("Failed to subscribe: {}", e);
+                                client.disconnect().await;
+                                false
+                            }
+                        }
+                    };
+
+                    if !subscribed {
+                        update_tray_status(&app_handle, "Status: Error");
+                        tokio::time::sleep(reconnect_delay).await;
+                        continue;
+                    }
+
+                    // Update tray status
+                    update_tray_status(&app_handle, "Status: Connected");
+
+                    // Event loop - release mutex between reads
+                    loop {
+                        let result = {
+                            let mut client = client_state.lock().await;
+                            client.read_event_timeout(event_timeout).await
+                        };
+
+                        match result {
+                            Ok(Some(event)) => {
+                                // Emit event to frontend
+                                let _ = app_handle.emit_all("violation", &event);
+
+                                // Show alert window
+                                if let Some(window) = app_handle.get_window("alert") {
+                                    let _ = window.emit("violation", &event);
+                                    let _ = window.show();
+                                    let _ = window.set_focus();
+                                }
+                            }
+                            Ok(None) => {
+                                // Timeout - no events, check connection is still alive
+                                let ping_ok = {
+                                    let mut client = client_state.lock().await;
+                                    client.ping().await.is_ok()
+                                };
+                                if !ping_ok {
+                                    eprintln!("Lost connection to agent (ping failed)");
+                                    break;
+                                }
+                            }
+                            Err(e) => {
+                                eprintln!("IPC error: {}", e);
+                                break;
+                            }
                         }
                     }
+
+                    // Disconnected - update status and retry
+                    {
+                        let mut client = client_state.lock().await;
+                        client.disconnect().await;
+                    }
+                    update_tray_status(&app_handle, "Status: Reconnecting...");
+                    tokio::time::sleep(reconnect_delay).await;
                 }
             });
 

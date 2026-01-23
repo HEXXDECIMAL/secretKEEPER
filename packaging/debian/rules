@@ -1,0 +1,39 @@
+#!/usr/bin/make -f
+
+export DH_VERBOSE = 1
+export CARGO_HOME = $(CURDIR)/debian/.cargo
+
+%:
+	dh $@
+
+override_dh_auto_build:
+	cargo build --release --package secretkeeper-agent
+
+override_dh_auto_install:
+	# Install binary
+	install -D -m 755 target/release/secretkeeper-agent \
+		debian/secretkeeper/usr/local/bin/secretkeeper-agent
+
+	# Install config
+	install -D -m 644 agent/config/default.toml \
+		debian/secretkeeper/etc/secretkeeper/config.toml
+
+	# Install systemd service
+	install -D -m 644 install/linux/secretkeeper.service \
+		debian/secretkeeper/lib/systemd/system/secretkeeper.service
+
+	# Create data directory
+	install -d -m 750 debian/secretkeeper/var/lib/secretkeeper
+
+override_dh_auto_test:
+	cargo test --package secretkeeper-agent
+
+override_dh_auto_clean:
+	cargo clean || true
+	rm -rf $(CARGO_HOME)
+
+override_dh_dwz:
+	# Skip dwz compression (Rust binaries don't work well with it)
+
+override_dh_strip:
+	# Skip stripping (preserve Rust panic information)

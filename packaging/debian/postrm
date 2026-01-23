@@ -1,0 +1,43 @@
+#!/bin/bash
+set -e
+
+case "$1" in
+    purge)
+        # Remove data directory on purge
+        if [ -d /var/lib/secretkeeper ]; then
+            rm -rf /var/lib/secretkeeper
+        fi
+
+        # Remove config directory on purge
+        if [ -d /etc/secretkeeper ]; then
+            rm -rf /etc/secretkeeper
+        fi
+
+        # Remove secretkeeper user
+        if getent passwd secretkeeper > /dev/null 2>&1; then
+            deluser --system secretkeeper || true
+        fi
+
+        # Remove secretkeeper group
+        if getent group secretkeeper > /dev/null 2>&1; then
+            delgroup --system secretkeeper || true
+        fi
+
+        # Reload systemd
+        systemctl daemon-reload || true
+        ;;
+
+    remove|upgrade|failed-upgrade|abort-install|abort-upgrade|disappear)
+        # Reload systemd after service file removal
+        systemctl daemon-reload || true
+        ;;
+
+    *)
+        echo "postrm called with unknown argument: $1" >&2
+        exit 1
+        ;;
+esac
+
+#DEBHELPER#
+
+exit 0

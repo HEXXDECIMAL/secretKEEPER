@@ -11,6 +11,7 @@ use std::ffi::CString;
 use std::os::unix::io::{AsRawFd, FromRawFd, OwnedFd};
 use std::path::PathBuf;
 use std::sync::Arc;
+use tokio::io::unix::AsyncFd;
 
 // Fanotify constants (not all exposed by nix)
 const FAN_CLOEXEC: libc::c_uint = 0x0000_0001;
@@ -73,8 +74,13 @@ impl FanotifyMonitor {
 
         let flags = FAN_CLOEXEC | class | FAN_UNLIMITED_QUEUE | FAN_UNLIMITED_MARKS;
 
-        let fd =
-            unsafe { libc::fanotify_init(flags, libc::O_RDONLY as u32 | libc::O_LARGEFILE as u32) };
+        // Use O_NONBLOCK for async-friendly I/O
+        let fd = unsafe {
+            libc::fanotify_init(
+                flags,
+                libc::O_RDONLY as u32 | libc::O_LARGEFILE as u32 | libc::O_NONBLOCK as u32,
+            )
+        };
 
         if fd < 0 {
             let err = std::io::Error::last_os_error();
@@ -251,12 +257,38 @@ impl FanotifyMonitor {
         path_str.to_string()
     }
 
+    /// Process a fanotify event. Returns (allow, fd) for permission events.
+    /// For blocking mode, ALWAYS returns Some to ensure we send a response.
     async fn process_event(&self, event: &FanEventMetadata, blocking: bool) -> Option<(bool, i32)> {
         // Get the file path from the fd
-        let file_path = Self::read_link_for_fd(event.fd)?;
+        let file_path = match Self::read_link_for_fd(event.fd) {
+            Some(p) => p,
+            None => {
+                // Can't resolve path - allow to avoid blocking unknown access
+                return if blocking {
+                    Some((true, event.fd))
+                } else {
+                    None
+                };
+            }
+        };
 
-        // Get process info
-        let context = Self::get_process_info(event.pid)?;
+        // Get process info - if process exited, allow access to avoid hang
+        let context = match Self::get_process_info(event.pid) {
+            Some(c) => c,
+            None => {
+                tracing::debug!(
+                    "Process {} exited before we could inspect it, allowing access to {}",
+                    event.pid,
+                    file_path.display()
+                );
+                return if blocking {
+                    Some((true, event.fd))
+                } else {
+                    None
+                };
+            }
+        };
 
         // Convert path to ~/ format for matching
         let normalized_path = Self::expand_path_to_tilde(&file_path, context.euid);
@@ -270,23 +302,35 @@ impl FanotifyMonitor {
             };
         }
 
-        // Process the access
-        if let Some(violation) = self
-            .context
-            .process_access(&normalized_path, &context)
-            .await
-        {
-            tracing::warn!(
-                "VIOLATION [{}]: {} accessed {} ({})",
-                violation.id,
-                violation.process_path,
-                violation.file_path,
-                violation.action
-            );
+        // Process the access with a timeout to avoid blocking indefinitely
+        let process_future = self.context.process_access(&normalized_path, &context);
+        let result = tokio::time::timeout(std::time::Duration::from_secs(5), process_future).await;
 
-            // In blocking mode, deny the access
-            if blocking {
-                return Some((false, event.fd)); // Deny
+        match result {
+            Ok(Some(violation)) => {
+                tracing::warn!(
+                    "VIOLATION [{}]: {} accessed {} ({})",
+                    violation.id,
+                    violation.process_path,
+                    violation.file_path,
+                    violation.action
+                );
+
+                // In blocking mode, deny the access
+                if blocking {
+                    return Some((false, event.fd)); // Deny
+                }
+            }
+            Ok(None) => {
+                // No violation
+            }
+            Err(_) => {
+                // Timeout - allow to avoid blocking the process
+                tracing::warn!(
+                    "Timeout processing access to {} by pid {}, allowing",
+                    normalized_path,
+                    event.pid
+                );
             }
         }
 
@@ -337,13 +381,27 @@ impl super::Monitor for FanotifyMonitor {
         let mut buf = vec![0u8; 4096];
         let raw_fd = fd.as_raw_fd();
 
+        // Wrap in AsyncFd for async-friendly I/O
+        let async_fd = AsyncFd::new(raw_fd)
+            .map_err(|e| Error::monitor(format!("Failed to create AsyncFd for fanotify: {}", e)))?;
+
         loop {
-            // Read events (blocking read)
+            // Wait for the fd to be readable
+            let mut guard = async_fd.readable().await.map_err(|e| {
+                Error::monitor(format!("Failed to wait for fanotify readability: {}", e))
+            })?;
+
+            // Try to read events (non-blocking)
             let bytes_read =
                 unsafe { libc::read(raw_fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len()) };
 
             if bytes_read < 0 {
                 let err = std::io::Error::last_os_error();
+                if err.kind() == std::io::ErrorKind::WouldBlock {
+                    // No data available yet, clear readiness and wait again
+                    guard.clear_ready();
+                    continue;
+                }
                 if err.kind() == std::io::ErrorKind::Interrupted {
                     continue;
                 }
@@ -351,6 +409,7 @@ impl super::Monitor for FanotifyMonitor {
             }
 
             if bytes_read == 0 {
+                guard.clear_ready();
                 continue;
             }
 
@@ -370,30 +429,53 @@ impl super::Monitor for FanotifyMonitor {
                 }
 
                 if event.fd >= 0 {
+                    let is_perm_event =
+                        blocking && (event.mask & (FAN_OPEN_PERM | FAN_ACCESS_PERM)) != 0;
+
                     // Process the event
-                    if let Some((allow, fd)) = self.process_event(event, blocking).await {
-                        if blocking && (event.mask & (FAN_OPEN_PERM | FAN_ACCESS_PERM)) != 0 {
-                            // Send response for permission event
-                            let response = FanResponse {
-                                fd,
-                                response: if allow { FAN_ALLOW } else { FAN_DENY },
-                            };
-
-                            unsafe {
-                                libc::write(
-                                    raw_fd,
-                                    &response as *const _ as *const libc::c_void,
-                                    std::mem::size_of::<FanResponse>(),
-                                );
-                            }
+                    let (allow, fd) = match self.process_event(event, blocking).await {
+                        Some((allow, fd)) => (allow, fd),
+                        None => {
+                            // Non-blocking mode or shouldn't happen - close fd
+                            unsafe { libc::close(event.fd) };
+                            offset += event.event_len as usize;
+                            continue;
                         }
+                    };
 
-                        // Close the event fd
-                        unsafe { libc::close(fd) };
-                    } else if event.fd >= 0 {
-                        // Close fd for events we don't process
-                        unsafe { libc::close(event.fd) };
+                    if is_perm_event {
+                        // Send response for permission event - MUST succeed or process hangs
+                        let response = FanResponse {
+                            fd,
+                            response: if allow { FAN_ALLOW } else { FAN_DENY },
+                        };
+
+                        let written = unsafe {
+                            libc::write(
+                                raw_fd,
+                                &response as *const _ as *const libc::c_void,
+                                std::mem::size_of::<FanResponse>(),
+                            )
+                        };
+
+                        if written < 0 {
+                            let err = std::io::Error::last_os_error();
+                            tracing::error!(
+                                "Failed to send fanotify response for fd {}: {}. Process may hang!",
+                                fd,
+                                err
+                            );
+                        } else if (written as usize) != std::mem::size_of::<FanResponse>() {
+                            tracing::error!(
+                                "Partial fanotify response write: {} of {} bytes. Process may hang!",
+                                written,
+                                std::mem::size_of::<FanResponse>()
+                            );
+                        }
                     }
+
+                    // Close the event fd
+                    unsafe { libc::close(fd) };
                 }
 
                 offset += event.event_len as usize;
@@ -405,5 +487,282 @@ impl super::Monitor for FanotifyMonitor {
         self.fanotify_fd = None;
         self.watched_paths.clear();
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::Config;
+    use crate::rules::RuleEngine;
+    use crate::storage::Storage;
+    use tokio::sync::broadcast;
+
+    fn create_test_monitor() -> FanotifyMonitor {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let storage = Arc::new(Storage::open(&db_path).unwrap());
+        let config = Config::default();
+        let rule_engine = Arc::new(tokio::sync::RwLock::new(RuleEngine::new(
+            Vec::new(),
+            Vec::new(),
+        )));
+        let (event_tx, _rx) = broadcast::channel(100);
+        let mode = Arc::new(tokio::sync::RwLock::new("block".to_string()));
+        let degraded_mode = Arc::new(tokio::sync::RwLock::new(false));
+        let pending_events = Arc::new(tokio::sync::RwLock::new(Vec::new()));
+        let context = Arc::new(super::super::MonitorContext::new(
+            config,
+            rule_engine,
+            storage,
+            event_tx,
+            mode,
+            degraded_mode,
+            pending_events,
+        ));
+        // Keep temp_dir alive for the duration of tests
+        std::mem::forget(temp_dir);
+        FanotifyMonitor::new(context)
+    }
+
+    // =========================================================================
+    // Struct size tests (critical for kernel ABI compatibility)
+    // =========================================================================
+
+    #[test]
+    fn test_fan_event_metadata_size() {
+        // FanEventMetadata must match kernel's fanotify_event_metadata (24 bytes)
+        assert_eq!(
+            std::mem::size_of::<FanEventMetadata>(),
+            24,
+            "FanEventMetadata size must be 24 bytes for kernel ABI"
+        );
+    }
+
+    #[test]
+    fn test_fan_response_size() {
+        // FanResponse must match kernel's fanotify_response (8 bytes)
+        assert_eq!(
+            std::mem::size_of::<FanResponse>(),
+            8,
+            "FanResponse size must be 8 bytes for kernel ABI"
+        );
+    }
+
+    // =========================================================================
+    // Fanotify constant tests
+    // =========================================================================
+
+    #[test]
+    fn test_fanotify_constants() {
+        // Verify constants match kernel values
+        assert_eq!(FAN_ALLOW, 0x01);
+        assert_eq!(FAN_DENY, 0x02);
+        assert_eq!(FAN_CLOEXEC, 0x0000_0001);
+        assert_eq!(FAN_CLASS_CONTENT, 0x0000_0004);
+        assert_eq!(FAN_CLASS_PRE_CONTENT, 0x0000_0008);
+        assert_eq!(FAN_OPEN_PERM, 0x0001_0000);
+        assert_eq!(FAN_ACCESS_PERM, 0x0002_0000);
+        assert_eq!(FAN_MARK_ADD, 0x0000_0001);
+        assert_eq!(FAN_MARK_MOUNT, 0x0000_0010);
+    }
+
+    #[test]
+    fn test_fan_event_metadata_len_constant() {
+        assert_eq!(FAN_EVENT_METADATA_LEN, 24);
+    }
+
+    // =========================================================================
+    // Monitor construction tests
+    // =========================================================================
+
+    #[test]
+    fn test_fanotify_monitor_new() {
+        let monitor = create_test_monitor();
+        assert!(monitor.fanotify_fd.is_none());
+        assert!(monitor.watched_paths.is_empty());
+    }
+
+    // =========================================================================
+    // Path expansion tests
+    // =========================================================================
+
+    #[test]
+    fn test_expand_path_to_tilde_matches() {
+        // Get current user's home for testing
+        let uid = unsafe { libc::getuid() };
+        if let Some(home) = get_home_for_uid(uid) {
+            let home_str = home.to_string_lossy();
+            let test_path = PathBuf::from(format!("{}/.ssh/id_rsa", home_str));
+
+            let result = FanotifyMonitor::expand_path_to_tilde(&test_path, Some(uid));
+            assert!(
+                result.starts_with("~/"),
+                "Expected ~/ prefix, got: {}",
+                result
+            );
+            assert!(result.ends_with(".ssh/id_rsa"));
+        }
+    }
+
+    #[test]
+    fn test_expand_path_to_tilde_no_match() {
+        // Path not under any home directory
+        let test_path = PathBuf::from("/etc/passwd");
+        let result = FanotifyMonitor::expand_path_to_tilde(&test_path, Some(0));
+        assert_eq!(result, "/etc/passwd");
+    }
+
+    #[test]
+    fn test_expand_path_to_tilde_no_uid() {
+        let test_path = PathBuf::from("/home/user/.ssh/id_rsa");
+        let result = FanotifyMonitor::expand_path_to_tilde(&test_path, None);
+        assert_eq!(result, "/home/user/.ssh/id_rsa");
+    }
+
+    #[test]
+    fn test_expand_path_to_tilde_invalid_uid() {
+        // Very high UID unlikely to exist
+        let test_path = PathBuf::from("/home/user/.ssh/id_rsa");
+        let result = FanotifyMonitor::expand_path_to_tilde(&test_path, Some(99999999));
+        assert_eq!(result, "/home/user/.ssh/id_rsa");
+    }
+
+    // =========================================================================
+    // Process info tests (only run on Linux)
+    // =========================================================================
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn test_get_process_info_current() {
+        let pid = std::process::id() as i32;
+        let result = FanotifyMonitor::get_process_info(pid);
+        assert!(result.is_some(), "Should get info for current process");
+
+        let ctx = result.unwrap();
+        assert_eq!(ctx.pid, Some(pid as u32));
+        assert!(ctx.ppid.is_some());
+        assert!(ctx.uid.is_some());
+        assert!(ctx.euid.is_some());
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn test_get_process_info_invalid_pid() {
+        // PID that almost certainly doesn't exist
+        let result = FanotifyMonitor::get_process_info(999999999);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn test_get_process_info_extracts_exe_path() {
+        let pid = std::process::id() as i32;
+        let result = FanotifyMonitor::get_process_info(pid);
+        assert!(result.is_some());
+
+        let ctx = result.unwrap();
+        // exe_path should be the test binary
+        let exe_str = ctx.exe_path.to_string_lossy();
+        assert!(
+            exe_str.contains("secretkeeper") || exe_str.contains("cargo"),
+            "Expected test binary path, got: {}",
+            exe_str
+        );
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn test_get_process_info_extracts_cmdline() {
+        let pid = std::process::id() as i32;
+        let result = FanotifyMonitor::get_process_info(pid);
+        assert!(result.is_some());
+
+        let ctx = result.unwrap();
+        // Should have args (at least the binary name)
+        assert!(ctx.args.is_some(), "Should have command line args");
+    }
+
+    // =========================================================================
+    // FD path resolution tests
+    // =========================================================================
+
+    #[test]
+    fn test_read_link_for_fd_stdin() {
+        // fd 0 (stdin) should resolve to something
+        let result = FanotifyMonitor::read_link_for_fd(0);
+        // May or may not succeed depending on how tests are run
+        // Just verify it doesn't panic
+        let _ = result;
+    }
+
+    #[test]
+    fn test_read_link_for_fd_invalid() {
+        // Negative fd should fail
+        let result = FanotifyMonitor::read_link_for_fd(-1);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_read_link_for_fd_nonexistent() {
+        // Very high fd unlikely to be open
+        let result = FanotifyMonitor::read_link_for_fd(99999);
+        assert!(result.is_none());
+    }
+
+    // =========================================================================
+    // Integration tests (require CAP_SYS_ADMIN, marked #[ignore])
+    // =========================================================================
+
+    #[test]
+    #[ignore = "requires CAP_SYS_ADMIN capability"]
+    #[cfg(target_os = "linux")]
+    fn test_fanotify_init_blocking() {
+        let mut monitor = create_test_monitor();
+        let result = monitor.init_fanotify(true);
+        assert!(
+            result.is_ok(),
+            "fanotify_init should succeed with CAP_SYS_ADMIN"
+        );
+        assert!(monitor.fanotify_fd.is_some());
+    }
+
+    #[test]
+    #[ignore = "requires CAP_SYS_ADMIN capability"]
+    #[cfg(target_os = "linux")]
+    fn test_fanotify_init_notify() {
+        let mut monitor = create_test_monitor();
+        let result = monitor.init_fanotify(false);
+        assert!(
+            result.is_ok(),
+            "fanotify_init should succeed with CAP_SYS_ADMIN"
+        );
+        assert!(monitor.fanotify_fd.is_some());
+    }
+
+    #[test]
+    #[ignore = "requires CAP_SYS_ADMIN capability"]
+    #[cfg(target_os = "linux")]
+    fn test_fanotify_add_watch() {
+        let mut monitor = create_test_monitor();
+        monitor.init_fanotify(true).unwrap();
+
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let result = monitor.add_watch(&temp_dir.path().to_path_buf(), true);
+        assert!(result.is_ok());
+        assert!(monitor.watched_paths.contains(temp_dir.path()));
+    }
+
+    #[test]
+    #[ignore = "requires CAP_SYS_ADMIN capability"]
+    #[cfg(target_os = "linux")]
+    fn test_fanotify_setup_watches() {
+        let mut monitor = create_test_monitor();
+        monitor.init_fanotify(true).unwrap();
+
+        let result = monitor.setup_watches(true);
+        assert!(result.is_ok());
+        // Should have added watches for /home, /root, /etc (if they exist)
+        assert!(!monitor.watched_paths.is_empty());
     }
 }
