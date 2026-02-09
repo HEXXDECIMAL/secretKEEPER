@@ -3,7 +3,7 @@
 use super::handlers::HandlerState;
 use super::protocol::{Request, Response, ViolationEvent};
 use crate::error::{Error, Result};
-use crate::rules::RuleEngine;
+use crate::rules::{LearningController, RuleEngine};
 use crate::storage::Storage;
 use std::path::Path;
 use std::sync::Arc;
@@ -221,6 +221,7 @@ pub struct IpcServer {
 
 impl IpcServer {
     /// Create a new IPC server at the given socket path.
+    #[allow(clippy::too_many_arguments)]
     pub async fn new(
         socket_path: &Path,
         storage: Arc<Storage>,
@@ -229,6 +230,7 @@ impl IpcServer {
         config_toml: String,
         rule_engine: Arc<RwLock<RuleEngine>>,
         pending_events: Arc<RwLock<Vec<ViolationEvent>>>,
+        learning_controller: Arc<LearningController>,
     ) -> Result<Self> {
         // Remove existing socket if present
         if socket_path.exists() {
@@ -267,6 +269,7 @@ impl IpcServer {
             config_toml,
             rule_engine,
             pending_events,
+            learning_controller,
         ));
 
         tracing::info!("IPC server listening on {}", socket_path.display());
@@ -495,6 +498,10 @@ mod tests {
         let degraded_mode = Arc::new(RwLock::new(false));
         let rule_engine = create_test_rule_engine();
         let pending_events = create_test_pending_events();
+        let learning_controller = Arc::new(LearningController::new(
+            crate::config::LearningConfig::default(),
+            storage.clone(),
+        ));
 
         let server = IpcServer::new(
             &socket_path,
@@ -504,6 +511,7 @@ mod tests {
             String::new(),
             rule_engine,
             pending_events,
+            learning_controller,
         )
         .await;
         assert!(server.is_ok());
@@ -604,6 +612,10 @@ mod tests {
         let degraded_mode = Arc::new(RwLock::new(false));
         let rule_engine = create_test_rule_engine();
         let pending_events = create_test_pending_events();
+        let learning_controller = Arc::new(LearningController::new(
+            crate::config::LearningConfig::default(),
+            storage.clone(),
+        ));
 
         let server = IpcServer::new(
             &socket_path,
@@ -613,6 +625,7 @@ mod tests {
             "test config".to_string(),
             rule_engine,
             pending_events,
+            learning_controller,
         )
         .await
         .unwrap();
@@ -632,6 +645,10 @@ mod tests {
         let degraded_mode = Arc::new(RwLock::new(false));
         let rule_engine = create_test_rule_engine();
         let pending_events = create_test_pending_events();
+        let learning_controller = Arc::new(LearningController::new(
+            crate::config::LearningConfig::default(),
+            storage.clone(),
+        ));
 
         let server = IpcServer::new(
             &socket_path,
@@ -641,6 +658,7 @@ mod tests {
             "test config".to_string(),
             rule_engine,
             pending_events,
+            learning_controller,
         )
         .await
         .unwrap();
@@ -663,6 +681,10 @@ mod tests {
         let degraded_mode = Arc::new(RwLock::new(false));
         let rule_engine = create_test_rule_engine();
         let pending_events = create_test_pending_events();
+        let learning_controller = Arc::new(LearningController::new(
+            crate::config::LearningConfig::default(),
+            storage.clone(),
+        ));
         let server = IpcServer::new(
             &socket_path,
             storage,
@@ -671,6 +693,7 @@ mod tests {
             String::new(),
             rule_engine,
             pending_events,
+            learning_controller,
         )
         .await;
 
@@ -692,6 +715,10 @@ mod tests {
         let degraded_mode = Arc::new(RwLock::new(false));
         let rule_engine = create_test_rule_engine();
         let pending_events = create_test_pending_events();
+        let learning_controller = Arc::new(LearningController::new(
+            crate::config::LearningConfig::default(),
+            storage.clone(),
+        ));
         let server = IpcServer::new(
             &socket_path,
             storage,
@@ -700,6 +727,7 @@ mod tests {
             String::new(),
             rule_engine,
             pending_events,
+            learning_controller,
         )
         .await;
 
@@ -709,6 +737,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::assertions_on_constants)]
     async fn test_max_line_length_constant() {
         // Verify the constant is reasonable
         assert!(MAX_LINE_LENGTH > 0);

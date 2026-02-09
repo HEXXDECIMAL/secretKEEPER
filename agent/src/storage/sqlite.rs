@@ -546,9 +546,8 @@ impl Storage {
         let conn = self.lock();
         let mut results = Vec::new();
 
-        let mut stmt = conn.prepare(
-            "SELECT * FROM learned_exceptions ORDER BY observation_count DESC",
-        )?;
+        let mut stmt =
+            conn.prepare("SELECT * FROM learned_exceptions ORDER BY observation_count DESC")?;
 
         let rows = stmt.query([])?;
         let mut rows = rows;

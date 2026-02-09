@@ -23,7 +23,7 @@ struct MenuBarView: View {
             if let learning = appState.learningStatus {
                 if learning.isLearning {
                     learningBanner(learning)
-                } else if learning.isPendingReview {
+                } else if learning.isPendingReview && learning.pendingCount > 0 {
                     reviewBanner(learning)
                 }
             }
@@ -81,7 +81,7 @@ struct MenuBarView: View {
         if let learning = appState.learningStatus, learning.isLearning {
             return "graduationcap.fill"
         }
-        if let learning = appState.learningStatus, learning.isPendingReview {
+        if let learning = appState.learningStatus, learning.isPendingReview, learning.pendingCount > 0 {
             return "list.clipboard.fill"
         }
         switch status.mode {
@@ -106,7 +106,7 @@ struct MenuBarView: View {
         if let learning = appState.learningStatus, learning.isLearning {
             return .blue
         }
-        if let learning = appState.learningStatus, learning.isPendingReview {
+        if let learning = appState.learningStatus, learning.isPendingReview, learning.pendingCount > 0 {
             return .orange
         }
         switch status.mode {
@@ -132,7 +132,7 @@ struct MenuBarView: View {
             if learning.isLearning {
                 return "Learning Mode"
             }
-            if learning.isPendingReview {
+            if learning.isPendingReview && learning.pendingCount > 0 {
                 return "Review Required"
             }
         }

@@ -113,6 +113,14 @@ async fn run_agent(args: &Args, config: Config) -> Result<()> {
     // Wrap rule engine in Arc<RwLock> for sharing between monitor and IPC
     let rule_engine = Arc::new(RwLock::new(rule_engine));
 
+    // Initialize learning controller
+    let learning_controller = Arc::new(rules::LearningController::new(
+        config.learning.clone(),
+        storage.clone(),
+    ));
+    let learning_state = learning_controller.initialize();
+    tracing::info!("Learning state: {}", learning_state);
+
     // Serialize config for IPC
     let config_toml = toml::to_string_pretty(&config).unwrap_or_default();
 
@@ -132,6 +140,7 @@ async fn run_agent(args: &Args, config: Config) -> Result<()> {
         config_toml,
         rule_engine.clone(),
         pending_events.clone(),
+        learning_controller.clone(),
     )
     .await?;
     tracing::info!("IPC socket: {}", config.agent.socket_path.display());
@@ -143,6 +152,7 @@ async fn run_agent(args: &Args, config: Config) -> Result<()> {
     let monitor_context = Arc::new(MonitorContext::new(
         config.clone(),
         rule_engine,
+        learning_controller,
         storage.clone(),
         event_tx,
         mode.clone(),

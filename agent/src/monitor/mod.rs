@@ -66,7 +66,7 @@ use crate::config::Config;
 use crate::error::{Error, Result};
 use crate::ipc::ViolationEvent;
 use crate::process::{build_process_tree, ProcessContext, ProcessTreeEntry};
-use crate::rules::{Decision, RuleEngine};
+use crate::rules::{Decision, LearningController, RuleEngine};
 use crate::storage::{Storage, Violation};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -272,6 +272,7 @@ pub struct EventStatsSnapshot {
 pub struct MonitorContext {
     pub config: Config,
     pub rule_engine: Arc<tokio::sync::RwLock<RuleEngine>>,
+    pub learning_controller: Arc<LearningController>,
     pub storage: Arc<Storage>,
     pub event_tx: broadcast::Sender<ViolationEvent>,
     pub mode: Arc<tokio::sync::RwLock<String>>,
@@ -288,9 +289,11 @@ pub struct MonitorContext {
 
 impl MonitorContext {
     /// Create a new monitor context.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         config: Config,
         rule_engine: Arc<tokio::sync::RwLock<RuleEngine>>,
+        learning_controller: Arc<LearningController>,
         storage: Arc<Storage>,
         event_tx: broadcast::Sender<ViolationEvent>,
         mode: Arc<tokio::sync::RwLock<String>>,
@@ -301,6 +304,7 @@ impl MonitorContext {
         Self {
             config,
             rule_engine,
+            learning_controller,
             storage,
             event_tx,
             mode,
@@ -397,6 +401,20 @@ impl MonitorContext {
                 None
             }
             Decision::Deny => {
+                // Check if learning mode is active
+                if self.learning_controller.is_learning() {
+                    if let Some(ref rid) = rule_id {
+                        if self.learning_controller.record_observation(rid, context) {
+                            tracing::info!(
+                                "LEARNING: {} accessing {} (recorded observation)",
+                                context.path.display(),
+                                file_path
+                            );
+                            return None;
+                        }
+                    }
+                }
+
                 // Check for duplicate: if we already have a pending event for the same PID + file,
                 // skip creating another event. This happens when a process reads a file multiple
                 // times before we can suspend it.
@@ -851,6 +869,10 @@ mod tests {
             Vec::new(),
             Vec::new(),
         )));
+        let learning_controller = Arc::new(LearningController::new(
+            config.learning.clone(),
+            storage.clone(),
+        ));
         let (event_tx, _rx) = broadcast::channel(100);
         let mode = Arc::new(tokio::sync::RwLock::new("block".to_string()));
         let degraded_mode = Arc::new(tokio::sync::RwLock::new(false));
@@ -859,6 +881,7 @@ mod tests {
         let ctx = MonitorContext::new(
             config,
             rule_engine,
+            learning_controller,
             storage,
             event_tx,
             mode,
@@ -899,6 +922,10 @@ mod tests {
             vec![protected],
             Vec::new(),
         )));
+        let learning_controller = Arc::new(LearningController::new(
+            config.learning.clone(),
+            storage.clone(),
+        ));
         let (event_tx, _rx) = broadcast::channel(100);
         let mode = Arc::new(tokio::sync::RwLock::new("block".to_string()));
         let degraded_mode = Arc::new(tokio::sync::RwLock::new(false));
@@ -907,6 +934,7 @@ mod tests {
         let ctx = MonitorContext::new(
             config,
             rule_engine,
+            learning_controller,
             storage,
             event_tx,
             mode,
@@ -945,6 +973,10 @@ mod tests {
             vec![protected],
             Vec::new(),
         )));
+        let learning_controller = Arc::new(LearningController::new(
+            config.learning.clone(),
+            storage.clone(),
+        ));
         let (event_tx, _rx) = broadcast::channel(100);
         let mode = Arc::new(tokio::sync::RwLock::new("block".to_string()));
         let degraded_mode = Arc::new(tokio::sync::RwLock::new(false));
@@ -953,6 +985,7 @@ mod tests {
         let ctx = MonitorContext::new(
             config,
             rule_engine,
+            learning_controller,
             storage,
             event_tx,
             mode,
@@ -989,6 +1022,10 @@ mod tests {
             Vec::new(),
             Vec::new(),
         )));
+        let learning_controller = Arc::new(LearningController::new(
+            config.learning.clone(),
+            storage.clone(),
+        ));
         let (event_tx, _rx) = broadcast::channel(100);
         let mode = Arc::new(tokio::sync::RwLock::new("block".to_string()));
         let degraded_mode = Arc::new(tokio::sync::RwLock::new(false));
@@ -997,6 +1034,7 @@ mod tests {
         let ctx = MonitorContext::new(
             config,
             rule_engine,
+            learning_controller,
             storage,
             event_tx,
             mode,
@@ -1034,6 +1072,10 @@ mod tests {
             vec![protected],
             Vec::new(),
         )));
+        let learning_controller = Arc::new(LearningController::new(
+            config.learning.clone(),
+            storage.clone(),
+        ));
         let (event_tx, _rx) = broadcast::channel(100);
         let mode = Arc::new(tokio::sync::RwLock::new("monitor".to_string())); // Not block mode
         let degraded_mode = Arc::new(tokio::sync::RwLock::new(false));
@@ -1042,6 +1084,7 @@ mod tests {
         let ctx = MonitorContext::new(
             config,
             rule_engine,
+            learning_controller,
             storage,
             event_tx,
             mode,
@@ -1074,6 +1117,10 @@ mod tests {
                 Vec::new(),
                 Vec::new(),
             )));
+            let learning_controller = Arc::new(LearningController::new(
+                config.learning.clone(),
+                storage.clone(),
+            ));
             let (event_tx, _rx) = broadcast::channel(100);
             let mode = Arc::new(tokio::sync::RwLock::new("block".to_string()));
             let degraded_mode = Arc::new(tokio::sync::RwLock::new(false));
@@ -1082,6 +1129,7 @@ mod tests {
             let ctx = Arc::new(MonitorContext::new(
                 config,
                 rule_engine,
+                learning_controller,
                 storage,
                 event_tx,
                 mode,

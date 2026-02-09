@@ -337,6 +337,20 @@ impl LearningController {
         self.storage.reject_all_learnings().unwrap_or(0)
     }
 
+    /// End the learning period early and transition to review.
+    pub fn end_learning(&self) -> bool {
+        if self.state() != LearningState::Learning {
+            return false;
+        }
+
+        self.storage
+            .set_state(
+                LEARNING_STATE_KEY,
+                &LearningState::PendingReview.to_string(),
+            )
+            .is_ok()
+    }
+
     /// Complete the review process.
     /// Migrates approved recommendations to exceptions and transitions to Complete state.
     /// Returns the number of exceptions created.

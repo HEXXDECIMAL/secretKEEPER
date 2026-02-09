@@ -3,7 +3,7 @@
 use super::protocol::{
     AddExceptionParams, Category, LearningRecommendation, Request, Response, ViolationEvent,
 };
-use crate::rules::{Exception, RuleEngine, SignerType};
+use crate::rules::{Exception, LearningController, RuleEngine, SignerType};
 use crate::storage::{Storage, Violation};
 use chrono::Utc;
 use std::sync::Arc;
@@ -29,6 +29,7 @@ pub struct HandlerState {
     pub pending_events: Arc<RwLock<Vec<ViolationEvent>>>,
     pub config_toml: String,
     pub rule_engine: Arc<RwLock<RuleEngine>>,
+    pub learning_controller: Arc<LearningController>,
 }
 
 impl HandlerState {
@@ -39,6 +40,7 @@ impl HandlerState {
         config_toml: String,
         rule_engine: Arc<RwLock<RuleEngine>>,
         pending_events: Arc<RwLock<Vec<ViolationEvent>>>,
+        learning_controller: Arc<LearningController>,
     ) -> Self {
         Self {
             storage,
@@ -49,6 +51,7 @@ impl HandlerState {
             pending_events,
             config_toml,
             rule_engine,
+            learning_controller,
         }
     }
 
@@ -535,47 +538,13 @@ fn violation_to_event(v: Violation) -> ViolationEvent {
 // Learning mode handlers
 // =============================================================================
 
-/// State key for learning mode persistence.
-const LEARNING_START_KEY: &str = "learning_start_time";
-const LEARNING_STATE_KEY: &str = "learning_state";
-const LEARNING_DURATION_HOURS: u64 = 24;
-
 impl HandlerState {
     fn handle_get_learning_status(&self) -> Response {
-        // Get state from storage
-        let state = self
-            .storage
-            .get_state(LEARNING_STATE_KEY)
-            .ok()
-            .flatten()
-            .unwrap_or_else(|| "disabled".to_string());
-
-        // Calculate hours remaining
-        let hours_remaining = if state == "learning" {
-            self.storage
-                .get_state(LEARNING_START_KEY)
-                .ok()
-                .flatten()
-                .and_then(|s| s.parse::<u64>().ok())
-                .map(|start| {
-                    let now = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_secs();
-                    let elapsed_hours = (now.saturating_sub(start)) / 3600;
-                    LEARNING_DURATION_HOURS.saturating_sub(elapsed_hours) as u32
-                })
-                .unwrap_or(0)
-        } else {
-            0
-        };
-
-        // Get counts
-        let stats = self.storage.count_learned_by_status().unwrap_or_default();
+        let stats = self.learning_controller.stats();
 
         Response::LearningStatus {
-            state,
-            hours_remaining,
+            state: stats.state.to_string(),
+            hours_remaining: stats.hours_remaining,
             pending_count: stats.pending,
             approved_count: stats.approved,
             rejected_count: stats.rejected,
@@ -583,98 +552,72 @@ impl HandlerState {
     }
 
     fn handle_get_learning_recommendations(&self) -> Response {
-        // Get current state to decide what to return
-        let current_state = self
-            .storage
-            .get_state(LEARNING_STATE_KEY)
-            .ok()
-            .flatten()
-            .unwrap_or_else(|| "disabled".to_string());
-
         // During learning, return all observations; during review, return only pending
-        let result = if current_state == "learning" {
-            self.storage.get_all_learned_observations()
+        let learnings = if self.learning_controller.is_learning() {
+            self.learning_controller.get_all_observations()
         } else {
-            self.storage.get_learned_exceptions("pending")
+            self.learning_controller.get_pending_recommendations()
         };
 
-        match result {
-            Ok(learnings) => {
-                let recommendations: Vec<LearningRecommendation> = learnings
-                    .into_iter()
-                    .map(|l| LearningRecommendation {
-                        id: l.id,
-                        category_id: l.category_id,
-                        process_path: l.process_path,
-                        process_name: l.process_base,
-                        team_id: l.team_id,
-                        signing_id: l.signing_id,
-                        is_platform_binary: l.is_platform_binary,
-                        observation_count: l.observation_count,
-                        status: l.status,
-                    })
-                    .collect();
-                Response::LearningRecommendations { recommendations }
-            }
-            Err(e) => Response::error(format!("Failed to get recommendations: {}", e)),
-        }
+        let recommendations: Vec<LearningRecommendation> = learnings
+            .into_iter()
+            .map(|l| LearningRecommendation {
+                id: l.id,
+                category_id: l.category_id,
+                process_path: l.process_path,
+                process_name: l.process_base,
+                team_id: l.team_id,
+                signing_id: l.signing_id,
+                is_platform_binary: l.is_platform_binary,
+                observation_count: l.observation_count,
+                status: l.status,
+            })
+            .collect();
+        Response::LearningRecommendations { recommendations }
     }
 
     fn handle_approve_learning(&self, id: i64) -> Response {
-        match self.storage.approve_learning(id) {
-            Ok(true) => Response::success(format!("Approved recommendation {}", id)),
-            Ok(false) => Response::error(format!(
+        if self.learning_controller.approve(id) {
+            Response::success(format!("Approved recommendation {}", id))
+        } else {
+            Response::error(format!(
                 "Recommendation {} not found or already processed",
                 id
-            )),
-            Err(e) => Response::error(format!("Failed to approve: {}", e)),
+            ))
         }
     }
 
     fn handle_reject_learning(&self, id: i64) -> Response {
-        match self.storage.reject_learning(id) {
-            Ok(true) => Response::success(format!("Rejected recommendation {}", id)),
-            Ok(false) => Response::error(format!(
+        if self.learning_controller.reject(id) {
+            Response::success(format!("Rejected recommendation {}", id))
+        } else {
+            Response::error(format!(
                 "Recommendation {} not found or already processed",
                 id
-            )),
-            Err(e) => Response::error(format!("Failed to reject: {}", e)),
+            ))
         }
     }
 
     fn handle_approve_all_learnings(&self) -> Response {
-        match self.storage.approve_all_learnings() {
-            Ok(count) => Response::success(format!("Approved {} recommendations", count)),
-            Err(e) => Response::error(format!("Failed to approve all: {}", e)),
-        }
+        let count = self.learning_controller.approve_all();
+        Response::success(format!("Approved {} recommendations", count))
     }
 
     fn handle_reject_all_learnings(&self) -> Response {
-        match self.storage.reject_all_learnings() {
-            Ok(count) => Response::success(format!("Rejected {} recommendations", count)),
-            Err(e) => Response::error(format!("Failed to reject all: {}", e)),
-        }
+        let count = self.learning_controller.reject_all();
+        Response::success(format!("Rejected {} recommendations", count))
     }
 
     fn handle_complete_learning_review(&self) -> Response {
         // Check if there are pending recommendations
-        if self.storage.has_pending_learnings().unwrap_or(false) {
+        if self.learning_controller.has_pending() {
             return Response::error(
                 "Cannot complete review: there are still pending recommendations. \
                  Please approve or reject all recommendations first.",
             );
         }
 
-        // Migrate approved learnings to exceptions
-        let migrated = match self.storage.migrate_approved_to_exceptions() {
-            Ok(count) => count,
-            Err(e) => return Response::error(format!("Failed to migrate exceptions: {}", e)),
-        };
-
-        // Transition to complete state
-        if let Err(e) = self.storage.set_state(LEARNING_STATE_KEY, "complete") {
-            return Response::error(format!("Failed to update state: {}", e));
-        }
+        let migrated = self.learning_controller.complete_review();
 
         Response::success(format!(
             "Learning review complete. Created {} exceptions.",
@@ -683,51 +626,22 @@ impl HandlerState {
     }
 
     fn handle_end_learning_early(&self) -> Response {
-        // Check current state
-        let current_state = self
-            .storage
-            .get_state(LEARNING_STATE_KEY)
-            .ok()
-            .flatten()
-            .unwrap_or_else(|| "disabled".to_string());
-
-        if current_state != "learning" {
-            return Response::error(format!(
+        if self.learning_controller.end_learning() {
+            Response::success("Learning period ended. Please review recommendations.")
+        } else {
+            Response::error(format!(
                 "Cannot end learning: current state is '{}', expected 'learning'",
-                current_state
-            ));
+                self.learning_controller.state()
+            ))
         }
-
-        // Transition to pending_review
-        if let Err(e) = self.storage.set_state(LEARNING_STATE_KEY, "pending_review") {
-            return Response::error(format!("Failed to update state: {}", e));
-        }
-
-        Response::success("Learning period ended. Please review recommendations.")
     }
 
     fn handle_restart_learning(&self) -> Response {
-        // Clear all learned observations
-        if let Err(e) = self.storage.clear_learned_observations() {
-            return Response::error(format!("Failed to clear observations: {}", e));
+        if self.learning_controller.restart_learning() {
+            Response::success("Learning mode restarted.")
+        } else {
+            Response::error("Failed to restart learning mode.")
         }
-
-        // Reset the start time to now
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-
-        if let Err(e) = self.storage.set_state(LEARNING_START_KEY, &now.to_string()) {
-            return Response::error(format!("Failed to set learning start time: {}", e));
-        }
-
-        // Set state to Learning
-        if let Err(e) = self.storage.set_state(LEARNING_STATE_KEY, "learning") {
-            return Response::error(format!("Failed to set learning state: {}", e));
-        }
-
-        Response::success("Learning mode restarted.")
     }
 }
 
@@ -750,6 +664,10 @@ mod tests {
         let degraded_mode = Arc::new(RwLock::new(false));
         let rule_engine = Arc::new(RwLock::new(RuleEngine::new(protected_files, Vec::new())));
         let pending_events = Arc::new(RwLock::new(Vec::new()));
+        let learning_controller = Arc::new(LearningController::new(
+            crate::config::LearningConfig::default(),
+            storage.clone(),
+        ));
         let state = HandlerState::new(
             storage,
             mode,
@@ -757,6 +675,7 @@ mod tests {
             "[agent]\nlog_level = \"info\"".to_string(),
             rule_engine,
             pending_events,
+            learning_controller,
         );
         (state, temp_dir)
     }
@@ -794,6 +713,10 @@ mod tests {
         let degraded_mode = Arc::new(RwLock::new(false));
         let rule_engine = Arc::new(RwLock::new(RuleEngine::new(Vec::new(), Vec::new())));
         let pending_events = Arc::new(RwLock::new(Vec::new()));
+        let learning_controller = Arc::new(LearningController::new(
+            crate::config::LearningConfig::default(),
+            storage.clone(),
+        ));
         let state = HandlerState::new(
             storage,
             mode,
@@ -801,6 +724,7 @@ mod tests {
             "test config".to_string(),
             rule_engine,
             pending_events,
+            learning_controller,
         );
 
         assert_eq!(state.config_toml, "test config");

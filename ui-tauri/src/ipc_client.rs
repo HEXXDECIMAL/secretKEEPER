@@ -580,7 +580,9 @@ impl IpcClient {
         }
     }
 
-    pub async fn get_learning_recommendations(&mut self) -> io::Result<Vec<LearningRecommendation>> {
+    pub async fn get_learning_recommendations(
+        &mut self,
+    ) -> io::Result<Vec<LearningRecommendation>> {
         match self.send(&Request::GetLearningRecommendations).await? {
             Response::LearningRecommendations { recommendations } => Ok(recommendations),
             Response::Error { message } => Err(io::Error::other(message)),
