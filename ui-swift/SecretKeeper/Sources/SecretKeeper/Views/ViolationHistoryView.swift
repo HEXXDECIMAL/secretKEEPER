@@ -8,15 +8,47 @@ struct ViolationHistoryView: View {
     @State private var selectedEntryId: String?
     @State private var sortOrder = [KeyPathComparator(\HistoryEntry.violation.timestamp, order: .reverse)]
 
+    // Outcome filters
+    @State private var showResumed = true
+    @State private var showKilled = true
+    @State private var showAllowed = true
+    @State private var showPending = true
+    @State private var showDismissed = true
+    @State private var showLogged = true
+
     var filteredHistory: [HistoryEntry] {
+        // Create a stable copy to avoid issues during view updates
+        let allEntries = Array(appState.violationHistory)
+
+        // Apply outcome filters
+        let outcomeFiltered = allEntries.filter { entry in
+            switch entry.userAction {
+            case .resumed: return showResumed
+            case .killed: return showKilled
+            case .allowed: return showAllowed
+            case .pending: return showPending
+            case .dismissed: return showDismissed
+            case .logged: return showLogged
+            }
+        }
+
+        // Apply search filter
+        let searchFiltered: [HistoryEntry]
         if searchText.isEmpty {
-            return appState.violationHistory
+            searchFiltered = outcomeFiltered
+        } else {
+            let search = searchText.lowercased()
+            searchFiltered = outcomeFiltered.filter { entry in
+                entry.violation.filePath.localizedCaseInsensitiveContains(search) ||
+                entry.violation.processPath.localizedCaseInsensitiveContains(search) ||
+                entry.violation.processName.localizedCaseInsensitiveContains(search) ||
+                (entry.violation.ruleId?.localizedCaseInsensitiveContains(search) ?? false) ||
+                (entry.violation.teamId?.localizedCaseInsensitiveContains(search) ?? false)
+            }
         }
-        return appState.violationHistory.filter { entry in
-            entry.violation.filePath.localizedCaseInsensitiveContains(searchText) ||
-            entry.violation.processPath.localizedCaseInsensitiveContains(searchText) ||
-            (entry.violation.teamId?.localizedCaseInsensitiveContains(searchText) ?? false)
-        }
+
+        // Apply sorting
+        return searchFiltered.sorted(using: sortOrder)
     }
 
     var selectedEntry: HistoryEntry? {
@@ -26,109 +58,226 @@ struct ViolationHistoryView: View {
 
     var body: some View {
         NavigationSplitView {
-            Table(filteredHistory, selection: $selectedEntryId, sortOrder: $sortOrder) {
-                TableColumn("Time", value: \.violation.timestamp) { entry in
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(formatTime(entry.violation.timestamp))
-                            .font(.system(.body, design: .monospaced))
-                        Text(formatDate(entry.violation.timestamp))
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
-                    }
-                }
-                .width(min: 80, ideal: 100)
-
-                TableColumn("Process") { entry in
-                    HStack(spacing: 6) {
-                        Circle()
-                            .fill(signingColor(for: entry.violation))
-                            .frame(width: 8, height: 8)
-                        Text(entry.violation.processName)
-                            .fontWeight(.medium)
-                        Text("(\(entry.violation.processPid))")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .width(min: 140, ideal: 180)
-
-                TableColumn("File") { entry in
-                    Text(entry.violation.filePath)
-                        .font(.system(.body, design: .monospaced))
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
-                .width(min: 200)
-
-                TableColumn("Response") { entry in
-                    UserActionBadge(action: entry.userAction)
-                }
-                .width(min: 90, ideal: 100)
-
-                TableColumn("Status", value: \.violation.action) { entry in
-                    AgentActionBadge(action: entry.violation.action)
-                }
-                .width(min: 80, ideal: 90)
-
-                TableColumn("") { entry in
-                    if wouldBeAllowedByExceptions(exceptions: appState.exceptions, violation: entry.violation) {
-                        Image(systemName: "checkmark.shield.fill")
-                            .foregroundStyle(.green)
-                            .help("Covered by existing exception")
-                    }
-                }
-                .width(30)
-            }
-            .searchable(text: $searchText, prompt: "Search violations...")
-            .navigationTitle("Violation History")
-            .toolbar {
-                ToolbarItem(placement: .primaryAction) {
-                    Button {
-                        refreshHistory()
-                    } label: {
-                        Image(systemName: "arrow.clockwise")
-                    }
-                    .help("Refresh history")
-                }
-
-                ToolbarItem(placement: .primaryAction) {
-                    Button {
-                        exportHistory()
-                    } label: {
-                        Image(systemName: "square.and.arrow.up")
-                    }
-                    .help("Export history")
-                }
-            }
-            .overlay {
-                if appState.violationHistory.isEmpty {
-                    ContentUnavailableView(
-                        "No Violations",
-                        systemImage: "checkmark.shield",
-                        description: Text("No violations have been recorded yet.")
-                    )
-                }
-            }
+            historyTable
+                .frame(minWidth: 750)
         } detail: {
-            if let entry = selectedEntry {
-                HistoryDetailView(entry: entry)
-            } else {
-                ContentUnavailableView(
-                    "Select a Violation",
-                    systemImage: "exclamationmark.triangle",
-                    description: Text("Select a violation from the list to see details.")
-                )
-            }
+            detailView
+                .frame(minWidth: 350)
         }
-        .frame(minWidth: 900, minHeight: 500)
+        .frame(minWidth: 1200, minHeight: 650)
         .onAppear {
-            // If opened from menubar with a specific entry selected, use that
             if let entryId = appState.selectedHistoryEntryId {
                 selectedEntryId = entryId
-                // Clear it so subsequent opens don't reselect
                 appState.selectedHistoryEntryId = nil
             }
         }
+    }
+
+    private var historyTable: some View {
+        Group {
+            if appState.violationHistory.isEmpty {
+                ContentUnavailableView(
+                    "No Credential Accesses",
+                    systemImage: "checkmark.shield",
+                    description: Text("No credential accesses have been recorded yet.")
+                )
+            } else {
+                Table(filteredHistory, selection: $selectedEntryId, sortOrder: $sortOrder) {
+                    TableColumn("Outcome", value: \.userAction.label) { entry in
+                        outcomeCell(entry)
+                    }
+                    .width(min: 85, ideal: 95)
+
+                    TableColumn("Time", value: \.violation.timestamp) { entry in
+                        timestampCell(entry)
+                    }
+                    .width(min: 140, ideal: 170)
+
+                    TableColumn("Process", value: \.violation.processName) { entry in
+                        processCell(entry)
+                    }
+                    .width(min: 140, ideal: 170)
+
+                    TableColumn("Credential", value: \.violation.filePath) { entry in
+                        credentialCell(entry)
+                    }
+                    .width(min: 220, ideal: 300)
+
+                    TableColumn("Rule") { entry in
+                        ruleCell(entry)
+                    }
+                    .width(min: 90, ideal: 110)
+                }
+                .searchable(text: $searchText, prompt: "Search credential accesses...")
+            }
+        }
+        .navigationTitle("Credential Access History")
+        .toolbar {
+            toolbarContent
+        }
+    }
+
+    @ViewBuilder
+    private var detailView: some View {
+        if let entry = selectedEntry {
+            HistoryDetailView(entry: entry)
+        } else {
+            ContentUnavailableView(
+                "Select a Credential Access",
+                systemImage: "key.fill",
+                description: Text("Select a credential access from the list to see details.")
+            )
+        }
+    }
+
+    @ToolbarContentBuilder
+    private var toolbarContent: some ToolbarContent {
+        ToolbarItem(placement: .automatic) {
+            filterMenu
+        }
+
+        ToolbarItem(placement: .primaryAction) {
+            Button(action: refreshHistory) {
+                Image(systemName: "arrow.clockwise")
+            }
+            .help("Refresh history")
+        }
+
+        ToolbarItem(placement: .primaryAction) {
+            Button(action: exportHistory) {
+                Image(systemName: "square.and.arrow.up")
+            }
+            .help("Export history")
+        }
+    }
+
+    private var filterMenu: some View {
+        Menu {
+            Toggle("Allowed", isOn: $showAllowed)
+            Toggle("Resumed", isOn: $showResumed)
+            Toggle("Killed", isOn: $showKilled)
+            Toggle("Pending", isOn: $showPending)
+            Toggle("Dismissed", isOn: $showDismissed)
+            Toggle("Logged", isOn: $showLogged)
+
+            Divider()
+
+            Button("Show All", action: showAllFilters)
+            Button("Hide All", action: hideAllFilters)
+        } label: {
+            Label("Filter", systemImage: "line.3.horizontal.decrease.circle")
+        }
+        .help("Filter by outcome type")
+    }
+
+    private func showAllFilters() {
+        showAllowed = true
+        showResumed = true
+        showKilled = true
+        showPending = true
+        showDismissed = true
+        showLogged = true
+    }
+
+    private func hideAllFilters() {
+        showAllowed = false
+        showResumed = false
+        showKilled = false
+        showPending = false
+        showDismissed = false
+        showLogged = false
+    }
+
+
+    // MARK: - Table Cell Views
+
+    private func outcomeCell(_ entry: HistoryEntry) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: entry.userAction.icon)
+                .foregroundStyle(userActionColor(entry.userAction))
+                .font(.system(size: 11))
+                .frame(width: 14)
+            Text(entry.userAction.label)
+                .font(.system(size: 12))
+                .foregroundStyle(userActionColor(entry.userAction))
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func timestampCell(_ entry: HistoryEntry) -> some View {
+        Text(formatCompactTimestamp(entry.violation.timestamp))
+            .font(.system(.body, design: .monospaced))
+            .help(entry.violation.timestamp.formatted(date: .complete, time: .complete))
+    }
+
+    private func formatCompactTimestamp(_ date: Date) -> String {
+        let calendar = Calendar.current
+        let now = Date()
+
+        if calendar.isDateInToday(date) {
+            // Today: just show time
+            return date.formatted(date: .omitted, time: .shortened)
+        } else if calendar.isDate(date, equalTo: now, toGranularity: .year) {
+            // This year: MMM d, HH:mm
+            let formatter = DateFormatter()
+            formatter.dateFormat = "MMM d, HH:mm"
+            return formatter.string(from: date)
+        } else {
+            // Other years: MMM d yyyy, HH:mm
+            let formatter = DateFormatter()
+            formatter.dateFormat = "MMM d yyyy, HH:mm"
+            return formatter.string(from: date)
+        }
+    }
+
+    private func processCell(_ entry: HistoryEntry) -> some View {
+        HStack(spacing: 6) {
+            Circle()
+                .fill(signingColor(for: entry.violation))
+                .frame(width: 8, height: 8)
+                .help(entry.violation.signingStatus.label)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(entry.violation.processName)
+                    .fontWeight(.medium)
+                Text("PID \(entry.violation.processPid)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func credentialCell(_ entry: HistoryEntry) -> some View {
+        Text(entry.violation.filePath)
+            .font(.system(.body, design: .monospaced))
+            .lineLimit(1)
+            .truncationMode(.middle)
+            .help(entry.violation.filePath)
+    }
+
+    private func ruleCell(_ entry: HistoryEntry) -> some View {
+        Group {
+            if let ruleId = entry.violation.ruleId {
+                Text(ruleId)
+                    .foregroundStyle(.secondary)
+            } else {
+                Text("—")
+                    .foregroundStyle(.tertiary)
+            }
+        }
+    }
+
+    private func isToday(_ date: Date) -> Bool {
+        Calendar.current.isDateInToday(date)
+    }
+
+    private func formatPrimaryTime(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        if isToday(date) {
+            formatter.dateFormat = "HH:mm:ss"
+        } else {
+            formatter.dateFormat = "MMM d"
+        }
+        return formatter.string(from: date)
     }
 
     private func formatTime(_ date: Date) -> String {
@@ -149,6 +298,17 @@ struct ViolationHistoryView: View {
         case .signed: return .green
         case .adhoc: return .orange
         case .unsigned: return .red
+        }
+    }
+
+    private func userActionColor(_ action: UserAction) -> Color {
+        switch action {
+        case .resumed: return .green
+        case .killed: return .red
+        case .allowed: return .blue
+        case .pending: return .orange
+        case .dismissed: return .secondary
+        case .logged: return .secondary
         }
     }
 
@@ -230,6 +390,7 @@ struct UserActionBadge: View {
         case .allowed: return .blue.opacity(0.15)
         case .pending: return .orange.opacity(0.15)
         case .dismissed: return .gray.opacity(0.15)
+        case .logged: return .gray.opacity(0.1)
         }
     }
 
@@ -240,6 +401,7 @@ struct UserActionBadge: View {
         case .allowed: return .blue
         case .pending: return .orange
         case .dismissed: return .secondary
+        case .logged: return .secondary
         }
     }
 }
@@ -353,7 +515,7 @@ struct HistoryDetailView: View {
             }
             .padding()
         }
-        .navigationTitle("Violation Details")
+        .navigationTitle("Access Details")
     }
 
     private var headerSection: some View {
@@ -368,8 +530,15 @@ struct HistoryDetailView: View {
                         .fontWeight(.bold)
                 }
 
-                Text(entry.violation.timestamp.formatted(date: .abbreviated, time: .standard))
-                    .foregroundColor(.secondary)
+                HStack(spacing: 4) {
+                    Text(entry.violation.timestamp.formatted(date: .abbreviated, time: .omitted))
+                        .foregroundColor(.secondary)
+                    Text("at")
+                        .foregroundStyle(.tertiary)
+                        .font(.caption)
+                    Text(entry.violation.timestamp.formatted(date: .omitted, time: .standard))
+                        .foregroundColor(.secondary)
+                }
 
                 if let actionTime = entry.actionTimestamp {
                     HStack(spacing: 4) {

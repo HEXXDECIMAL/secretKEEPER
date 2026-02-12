@@ -26,6 +26,11 @@ public enum ProcessState {
 
 /// Check the current state of a process by PID using sysctl.
 public func processState(for pid: UInt32) -> ProcessState {
+    // Sanity check: invalid PIDs
+    guard pid > 0 else {
+        return .dead
+    }
+
     // First check if process exists
     let signalResult = kill(pid_t(pid), 0)
     if signalResult != 0 {
@@ -277,6 +282,7 @@ public enum UserAction: String, Codable {
     case allowed    // User clicked OK (allow_permanently)
     case pending    // No action taken yet (process still stopped)
     case dismissed  // User closed without action (process remained stopped)
+    case logged     // Violation was only logged (no process suspension, no user action needed)
 
     public var label: String {
         switch self {
@@ -285,6 +291,7 @@ public enum UserAction: String, Codable {
         case .allowed: return "Allowed"
         case .pending: return "Pending"
         case .dismissed: return "Dismissed"
+        case .logged: return "Logged"
         }
     }
 
@@ -295,6 +302,7 @@ public enum UserAction: String, Codable {
         case .allowed: return "checkmark.circle.fill"
         case .pending: return "pause.circle.fill"
         case .dismissed: return "minus.circle.fill"
+        case .logged: return "doc.text.fill"
         }
     }
 }

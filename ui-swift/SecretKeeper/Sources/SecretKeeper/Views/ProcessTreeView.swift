@@ -40,7 +40,9 @@ struct ProcessTreeRow: View {
     let isLast: Bool
 
     var body: some View {
-        let state = entry.currentState
+        // Use the captured isStopped state instead of making a live system call.
+        // This avoids hundreds of sysctl calls when rendering historical violations.
+        let state: ProcessState = entry.isStopped ? .stopped : .running
         HStack(spacing: 0) {
             // Compact tree indent (12px per level)
             if depth > 0 {

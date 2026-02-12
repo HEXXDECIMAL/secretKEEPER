@@ -309,38 +309,61 @@ impl HandlerState {
         if let Some(pos) = pending.iter().position(|e| e.id == event_id) {
             let event = pending.remove(pos);
 
-            // Resume the process and its parent if they were suspended
+            // Resume all stopped processes in the tree
             #[cfg(unix)]
             {
                 use nix::sys::signal::{kill, Signal};
                 use nix::unistd::Pid;
 
-                // Resume child process
-                match pid_to_raw(event.process_pid) {
-                    Some(raw_pid) => {
-                        let pid = Pid::from_raw(raw_pid);
-                        if let Err(e) = kill(pid, Signal::SIGCONT) {
-                            tracing::warn!("Failed to resume process {}: {}", event.process_pid, e);
-                        }
+                let mut resumed_count = 0;
+                let mut failed_pids = Vec::new();
+
+                // Iterate through all processes in the tree and resume any that are stopped
+                for entry in &event.process_tree {
+                    if !entry.is_stopped {
+                        continue;
                     }
-                    None => {
-                        tracing::warn!("PID {} too large for signal operation", event.process_pid);
+
+                    // Skip init/launchd and invalid PIDs
+                    if entry.pid <= 1 {
+                        continue;
+                    }
+
+                    match pid_to_raw(entry.pid) {
+                        Some(raw_pid) => {
+                            let pid = Pid::from_raw(raw_pid);
+                            if let Err(e) = kill(pid, Signal::SIGCONT) {
+                                tracing::warn!(
+                                    "Failed to resume stopped process {} ({}): {}",
+                                    entry.pid,
+                                    entry.name,
+                                    e
+                                );
+                                failed_pids.push(entry.pid);
+                            } else {
+                                tracing::info!(
+                                    "Resumed stopped process {} ({})",
+                                    entry.pid,
+                                    entry.name
+                                );
+                                resumed_count += 1;
+                            }
+                        }
+                        None => {
+                            tracing::warn!(
+                                "PID {} too large for signal operation, skipping",
+                                entry.pid
+                            );
+                            failed_pids.push(entry.pid);
+                        }
                     }
                 }
 
-                // Resume parent process if it was also stopped
-                if let Some(ppid) = event.parent_pid {
-                    if ppid > 1 {
-                        if let Some(raw_ppid) = pid_to_raw(ppid) {
-                            let parent = Pid::from_raw(raw_ppid);
-                            if let Err(e) = kill(parent, Signal::SIGCONT) {
-                                tracing::warn!("Failed to resume parent process {}: {}", ppid, e);
-                            } else {
-                                tracing::info!("Resumed parent process {}", ppid);
-                            }
-                        }
-                    }
-                }
+                tracing::info!(
+                    "Allowed process {} once, resumed {} stopped process(es)",
+                    event.process_pid,
+                    resumed_count
+                );
             }
 
             Response::success(format!("Allowed process {} once", event.process_pid))
@@ -428,41 +451,73 @@ impl HandlerState {
                 use nix::sys::signal::{kill, Signal};
                 use nix::unistd::Pid;
 
-                // Kill child process
-                match pid_to_raw(event.process_pid) {
-                    Some(raw_pid) => {
-                        let pid = Pid::from_raw(raw_pid);
-                        if let Err(e) = kill(pid, Signal::SIGKILL) {
-                            return Response::error(format!(
-                                "Failed to kill process {}: {}",
-                                event.process_pid, e
-                            ));
-                        }
-                    }
-                    None => {
-                        return Response::error(format!(
-                            "PID {} too large for signal operation",
-                            event.process_pid
-                        ));
-                    }
-                }
+                let mut killed_count = 0;
+                let mut failed_pids = Vec::new();
 
-                // Kill parent process if it was also stopped
-                if let Some(ppid) = event.parent_pid {
-                    if ppid > 1 {
-                        if let Some(raw_ppid) = pid_to_raw(ppid) {
-                            let parent = Pid::from_raw(raw_ppid);
-                            if let Err(e) = kill(parent, Signal::SIGKILL) {
-                                tracing::warn!("Failed to kill parent process {}: {}", ppid, e);
+                // Iterate through all processes in the tree and kill any that are stopped
+                for entry in &event.process_tree {
+                    if !entry.is_stopped {
+                        continue;
+                    }
+
+                    // Skip init/launchd and invalid PIDs
+                    if entry.pid <= 1 {
+                        continue;
+                    }
+
+                    match pid_to_raw(entry.pid) {
+                        Some(raw_pid) => {
+                            let pid = Pid::from_raw(raw_pid);
+                            if let Err(e) = kill(pid, Signal::SIGKILL) {
+                                tracing::warn!(
+                                    "Failed to kill stopped process {} ({}): {}",
+                                    entry.pid,
+                                    entry.name,
+                                    e
+                                );
+                                failed_pids.push(entry.pid);
                             } else {
-                                tracing::info!("Killed parent process {}", ppid);
+                                tracing::info!(
+                                    "Killed stopped process {} ({})",
+                                    entry.pid,
+                                    entry.name
+                                );
+                                killed_count += 1;
                             }
                         }
+                        None => {
+                            tracing::warn!(
+                                "PID {} too large for signal operation, skipping",
+                                entry.pid
+                            );
+                            failed_pids.push(entry.pid);
+                        }
                     }
                 }
+
+                if killed_count == 0 && !failed_pids.is_empty() {
+                    return Response::error(format!(
+                        "Failed to kill any stopped processes. Failed PIDs: {:?}",
+                        failed_pids
+                    ));
+                }
+
+                let msg = if failed_pids.is_empty() {
+                    format!("Killed {} stopped process(es)", killed_count)
+                } else {
+                    format!(
+                        "Killed {} stopped process(es), failed to kill {} process(es): {:?}",
+                        killed_count,
+                        failed_pids.len(),
+                        failed_pids
+                    )
+                };
+
+                Response::success(msg)
             }
 
-            Response::success(format!("Killed process {} and parent", event.process_pid))
+            #[cfg(not(unix))]
+            Response::error("Process termination not supported on this platform".to_string())
         } else {
             Response::error(format!("Event {} not found in pending events", event_id))
         }

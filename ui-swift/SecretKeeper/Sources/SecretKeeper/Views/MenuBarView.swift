@@ -311,8 +311,13 @@ struct MenuBarView: View {
 
     private var menuSection: some View {
         VStack(spacing: 2) {
-            // Violation History submenu
+            // Violation History submenu (only actual violations)
             violationHistorySubmenu
+
+            // Credential Access History button
+            MenuItem(title: "Credential Access History", icon: "clock.arrow.circlepath") {
+                openWindow(id: "history")
+            }
 
             MenuItem(title: "Settings...", icon: "gear") {
                 openWindow(id: "settings")
@@ -330,6 +335,13 @@ struct MenuBarView: View {
         }
     }
 
+    /// Filter to only show actual violations (not auto-logged accesses)
+    private var violations: [HistoryEntry] {
+        appState.violationHistory.filter { entry in
+            entry.userAction != .logged
+        }
+    }
+
     private var violationHistorySubmenu: some View {
         VStack(spacing: 0) {
             // Header row - toggles expansion
@@ -339,12 +351,12 @@ struct MenuBarView: View {
                 }
             } label: {
                 HStack(spacing: 8) {
-                    Image(systemName: "clock.arrow.circlepath")
+                    Image(systemName: "exclamationmark.triangle.fill")
                         .frame(width: 16)
                         .foregroundStyle(.secondary)
                     Text("Violation History")
                     Spacer()
-                    Text("\(appState.violationHistory.count)")
+                    Text("\(violations.count)")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, 6)
@@ -366,7 +378,7 @@ struct MenuBarView: View {
             // Expanded content
             if historyExpanded {
                 VStack(spacing: 0) {
-                    if appState.violationHistory.isEmpty {
+                    if violations.isEmpty {
                         Text("No violations recorded")
                             .font(.caption)
                             .foregroundStyle(.secondary)
@@ -375,17 +387,17 @@ struct MenuBarView: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                     } else {
                         // Use Array() to avoid ArraySlice issues with ForEach
-                        ForEach(Array(appState.violationHistory.prefix(10))) { entry in
+                        ForEach(Array(violations.prefix(10))) { entry in
                             HistoryEntryRow(entry: entry)
                         }
 
-                        if appState.violationHistory.count > 10 {
+                        if violations.count > 10 {
                             Button {
                                 openWindow(id: "history")
                             } label: {
                                 HStack {
                                     Spacer()
-                                    Text("View all \(appState.violationHistory.count) violations...")
+                                    Text("View all \(violations.count) violations...")
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
                                     Spacer()
@@ -566,6 +578,7 @@ struct HistoryEntryRow: View {
         case .allowed: return .blue
         case .pending: return .orange
         case .dismissed: return .secondary
+        case .logged: return .secondary
         }
     }
 

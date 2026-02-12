@@ -49,7 +49,7 @@ struct SecretKeeperApp: App {
         .windowResizability(.contentSize)
         .defaultPosition(.center)
 
-        Window("Violation History", id: "history") {
+        Window("Credential Access History", id: "history") {
             ViolationHistoryView()
                 .environmentObject(appDelegate.appState)
         }
@@ -169,8 +169,38 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func updateMenuBarIcon() {
         guard let button = statusItem?.button else { return }
 
-        // Use SF Symbol shield icon
-        button.image = NSImage(systemSymbolName: "lock.shield.fill", accessibilityDescription: "SecretKeeper")
+        // Determine icon based on connection state
+        let iconName: String
+        let tintColor: NSColor?
+
+        if !appState.isConnected {
+            // Disconnected - show red X shield
+            iconName = "xmark.shield.fill"
+            tintColor = .systemRed
+        } else if let status = appState.agentStatus {
+            // Connected - show icon based on mode
+            if status.mode == "disabled" {
+                iconName = "xmark.shield.fill"
+                tintColor = .systemRed
+            } else {
+                iconName = "lock.shield.fill"
+                tintColor = nil  // Use default tint
+            }
+        } else {
+            // Connected but no status yet
+            iconName = "lock.shield.fill"
+            tintColor = nil
+        }
+
+        let image = NSImage(systemSymbolName: iconName, accessibilityDescription: "SecretKeeper")
+
+        // Configure the image with tint color if needed
+        if let tintColor = tintColor {
+            let config = NSImage.SymbolConfiguration(paletteColors: [tintColor])
+            button.image = image?.withSymbolConfiguration(config)
+        } else {
+            button.image = image
+        }
     }
 
     private func setupNotificationObservers() {
@@ -244,27 +274,26 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         appLogger.info("Creating window: \(id)")
 
         let window: NSWindow
-        let contentView: AnyView
 
         switch id {
         case "history":
-            contentView = AnyView(
-                ViolationHistoryView()
-                    .environmentObject(appState)
-            )
             window = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 900, height: 600),
+                contentRect: NSRect(x: 0, y: 0, width: 1200, height: 650),
                 styleMask: [.titled, .closable, .resizable, .miniaturizable],
                 backing: .buffered,
-                defer: false
+                defer: true  // Defer window creation to avoid eager view evaluation
             )
-            window.title = "Violation History"
+            window.title = "Credential Access History"
 
-        case "settings":
-            contentView = AnyView(
-                SettingsView()
+            // Create hosting view with deferred rendering to prevent crashes
+            // when there are many violations in history
+            let hostingView = NSHostingView(
+                rootView: ViolationHistoryView()
                     .environmentObject(appState)
             )
+            window.contentView = hostingView
+
+        case "settings":
             window = NSWindow(
                 contentRect: NSRect(x: 0, y: 0, width: 500, height: 500),
                 styleMask: [.titled, .closable, .resizable],
@@ -272,6 +301,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 defer: false
             )
             window.title = "Settings"
+            window.contentView = NSHostingView(
+                rootView: SettingsView()
+                    .environmentObject(appState)
+            )
 
         default:
             appLogger.warning("Unknown window id: \(id)")
@@ -279,7 +312,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         window.identifier = NSUserInterfaceItemIdentifier(id)
-        window.contentView = NSHostingView(rootView: contentView)
         window.center()
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
@@ -746,8 +778,17 @@ extension AppDelegate: IPCClientDelegate {
             for violation in violations {
                 // Only add if not already in history (avoid duplicates on reconnect)
                 if self.appState.violationHistory.first(where: { $0.id == violation.id }) == nil {
-                    // Historical violations have unknown user action - mark as dismissed
-                    let entry = HistoryEntry(violation: violation, userAction: .dismissed)
+                    // Determine user action based on violation action from agent
+                    let userAction: UserAction
+                    if violation.action.lowercased() == "logged" {
+                        // Logged violations don't suspend processes, so no user action was needed
+                        userAction = .logged
+                    } else {
+                        // For blocked/suspended violations, we don't know what happened, mark as dismissed
+                        // (the user may have taken action that wasn't tracked)
+                        userAction = .dismissed
+                    }
+                    let entry = HistoryEntry(violation: violation, userAction: userAction)
                     self.appState.violationHistory.append(entry)
                 }
             }
